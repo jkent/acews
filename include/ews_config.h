@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: MIT
+#pragma once
+
+#if defined(ESP_PLATFORM)
+# include "sdkconfig.h"
+#endif
+
+
+#ifndef CONFIG_EWS_USE_IPV6
+# ifdef ESP_PLATFORM
+#  define CONFIG_EWS_USE_IPV6 CONFIG_LWIP_IPV6
+# else
+#  define CONFIG_EWS_USE_IPV6 1
+# endif
+#endif
+
+#ifndef CONFIG_EWS_HTTP_CLIENTS
+# define CONFIG_EWS_HTTP_CLIENTS 2
+#endif
+
+#ifndef CONFIG_EWS_HTTP_BACKLOG_DFLT
+# define CONFIG_EWS_HTTP_BACKLOG_DFLT ((CONFIG_EWS_HTTP_CLIENTS) * 3 / 2)
+#endif
+
+#ifndef CONFIG_EWS_HTTPS_CLIENTS
+# define CONFIG_EWS_HTTPS_CLIENTS 2
+#endif
+
+#ifndef CONFIG_EWS_HTTPS_BACKLOG_DFLT
+# define CONFIG_EWS_HTTPS_BACKLOG_DFLT ((CONFIG_EWS_HTTPS_CLIENTS) * 3 / 2)
+#endif
+
+#ifndef CONFIG_EWS_IDLE_TIMEOUT_DFLT
+# define CONFIG_EWS_IDLE_TIMEOUT_DFLT 15000
+#endif
+
+#ifndef CONFIG_EWS_SESSION_BUFSIZE
+# define CONFIG_EWS_SESSION_BUFSIZE 2048
+#endif
+
+// #ifndef CONFIG_EWS_REQ_CHUNKED
+// # define CONFIG_EWS_REQ_CHUNKED 1
+// #endif
+
+// #ifndef CONFIG_EWS_REQ_MULTIPART
+// # define CONFIG_EWS_REQ_MULTIPART 1
+// #endif
+
+#ifndef CONFIG_EWS_RARE_METHODS
+# define CONFIG_EWS_RARE_METHODS 0
+#endif
+
+// #ifndef CONFIG_EWS_RARE_STATUSES
+// # define CONFIG_EWS_RARE_STATUSES 0
+// #endif
+
+#ifndef CONFIG_EWS_WORKER_STACK_SIZE
+# define CONFIG_EWS_WORKER_STACK_SIZE 4096
+#endif
