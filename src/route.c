@@ -107,7 +107,8 @@ ews_route_status_t ews_route_test_handler(ews_sess_t *sess,
         return EWS_ROUTE_STATUS_NEXT;
 
     case EWS_SESS_RESPONSE_HEADER:
-        sess->ops->header(sess, "Content-Length", "12");
+        //sess->ops->header(sess, "Content-Length", "12");
+        sess->ops->header(sess, "Transfer-Encoding", "chunked");
         return EWS_ROUTE_STATUS_NEXT;
 
     case EWS_SESS_RESPONSE_BODY:

@@ -17,9 +17,12 @@ static void http_error(ews_sess_t *sess, int code, const char *msg);
 
 static ssize_t http_recv(ews_sess_t *sess, void *buf, size_t len)
 {
-    // ews_http_data_t *data = container_of(sess, ews_http_data_t, sess);
-
-    return -1;
+    len = MIN(len, sess->data.chunk_len);
+    if (buf) {
+        memcpy(buf, sess->data.chunk, len);
+    }
+    sess->data.chunk_len -= len;
+    return len;
 }
 
 static ssize_t http_send(ews_sess_t *sess, const void *buf, size_t len)
@@ -255,7 +258,7 @@ static ews_route_status_t call_handler(ews_sess_t *sess)
             break;
 
         case EWS_SESS_RESPONSE_BODY:
-            data->block.state = EWS_HTTP_FINALIZE;
+            finalize(sess);
             break;
         }
         return status;
@@ -341,8 +344,10 @@ static bool request_begin(ews_sess_t *sess)
     ews_http_data_t *data = container_of(sess, ews_http_data_t, sess);
     ews_http_request_t *request = &data->block.request;
     ews_sock_t *sock = sess->sock;
-
     char *p, *version = NULL;
+
+    /// initialization
+    request->length = SIZE_MAX;
 
     request->buf = &data->buf[data->bufpos];
     request->buflen = find(request->buf, data->buflen, "\r\n");
@@ -472,6 +477,7 @@ static bool request_header(ews_sess_t *sess)
     ews_http_data_t *data = container_of(sess, ews_http_data_t, sess);
     ews_http_request_t *request = &data->block.request;
     ews_sock_t *sock = sess->sock;
+    ssize_t len;
 
     request->buf = &data->buf[data->bufpos];
     request->buflen = find(request->buf, data->buflen, "\r\n");
@@ -488,59 +494,170 @@ static bool request_header(ews_sess_t *sess)
     data->bufpos += request->buflen + 2;
 
     if (request->buflen == 0) {
+        if (request->length != SIZE_MAX ||
+                data->block.flags & EWS_HTTP_FLAGS_REQUEST_CHUNKED) {
+            data->block.state = EWS_SESS_REQUEST_BODY;
+            return false;
+        }
         data->block.state = EWS_SESS_RESPONSE_BEGIN;
-    } else {
-        sess->data.name = (char *) request->buf;
-        sess->data.name_len = find(request->buf, request->buflen, ": ");
-        if (sess->data.name_len < 1 || sess->data.name_len >= request->buflen) {
-            http_error(sess, 400, "Invalid Header");
+        return false;
+    }
+
+    sess->data.name = (char *) request->buf;
+    len = find(request->buf, request->buflen, ": ");
+    if (len < 1) {
+        http_error(sess, 400, "Invalid Header");
+        sock->flags |= EWS_SOCK_FLAG_PEND_CLOSE;
+        return true;
+    }
+    sess->data.name_len = len;
+    request->buf[len] = '\0';
+
+    sess->data.value = (char *) &request->buf[len + 1];
+    while (isspace(*sess->data.value)) {
+        sess->data.value++;
+    }
+    len = (char *) &request->buf[request->buflen] - sess->data.value;
+    sess->data.value_len = len;
+
+    if (strcasecmp(sess->data.name, "Connection") == 0) {
+        if (strstr(sess->data.value, "close")) {
+            data->block.flags &= ~EWS_HTTP_FLAGS_KEEPALIVE;
+        } else if (strstr(sess->data.value, "keep-alive")) {
+            data->block.flags |= EWS_HTTP_FLAGS_KEEPALIVE;
+        }
+    } else if (strcasecmp(sess->data.name, "Content-Length") == 0) {
+        if (!(data->block.flags & EWS_HTTP_FLAGS_REQUEST_CHUNKED)) {
+            request->length = strtol(sess->data.value, NULL, 10);
+        }
+    } else if (strcasecmp(sess->data.name, "Transfer-Encoding") == 0) {
+        if (strstr(sess->data.value, "chunked") == NULL) {
+            goto done;
+        }
+        data->block.flags |= EWS_HTTP_FLAGS_REQUEST_CHUNKED;
+        data->block.flags |= EWS_HTTP_FLAGS_REQUEST_CHUNKED_LINE;
+        request->length = SIZE_MAX;
+    } else if (strcasecmp(sess->data.name, "Content-Type") == 0) {
+        char *p;
+        if ((p = strstr(sess->data.value, "multipart/form-data;")) == NULL) {
+            goto done;
+        }
+        if ((p = strstr(p, "boundary=")) == NULL) {
+            goto done;
+        }
+        p += 9;
+        size_t len = strlen(p);
+        if (*p == '"') {
+            p[len - 1] = '\0';
+            len -= 2;
+            p++;
+        }
+        data->block.request.boundary = strdup(p);
+        if (data->block.request.boundary == NULL) {
+            http_error(sess, 500, "Internal Server Error");
             sock->flags |= EWS_SOCK_FLAG_PEND_CLOSE;
             return true;
         }
-        request->buf[sess->data.name_len] = '\0';
-        sess->data.value = (char *) &request->buf[sess->data.name_len + 1];
-        while (isspace(*sess->data.value)) {
-            sess->data.value++;
-        }
-        sess->data.value_len =
-                (char *) &request->buf[request->buflen] - sess->data.value;
-        call_handler(sess);
+        data->block.request.boundary_len = len;
+        data->block.flags |= EWS_HTTP_FLAGS_REQUEST_MULTIPART;
+        printf("%s\n", p);
     }
+
+done:
+    call_handler(sess);
 
     return false;
 }
 
 static bool request_body(ews_sess_t *sess)
 {
-    // ews_http_data_t *data = container_of(sess, ews_http_data_t, sess);
-    // ews_http_request_t *request = &data->block.request;
+    ews_http_data_t *data = container_of(sess, ews_http_data_t, sess);
+    ews_http_request_t *request = &data->block.request;
+    size_t len;
+
+    request->buf = &data->buf[data->bufpos];
+    if (data->block.flags & EWS_HTTP_FLAGS_REQUEST_CHUNKED) {
+        /// we expect a \r\n sequence
+        if (data->block.flags & EWS_HTTP_FLAGS_REQUEST_CHUNKED_LINE) {
+            ssize_t pos = find(request->buf, data->buflen, "\r\n");
+            /// no \r\n sequence, fetch more data
+            if (pos < 0) {
+                return true;
+            /// we found a \r\n sequence
+            } else if (pos == 0) {
+                /// look for a terminating sequence
+                pos = find(request->buf + 2, data->buflen - 2, "0\r\n\r\n");
+                /// found it, continue to next state
+                if (pos == 0) {
+                    data->bufpos += 2;
+                    data->buflen -= 2;
+                    data->block.state = EWS_SESS_RESPONSE_BEGIN;
+                }
+                return true;
+            /// we found a hex number and \r\n sequence
+            } else if (pos <= 8) {
+                request->buf[pos] = '\0';
+                request->chunked_size = strtoul((char *) request->buf, NULL,
+                        16);
+                request->chunked_pos = 0;
+                data->bufpos += pos + 2;
+                data->buflen -= pos + 2;
+                data->block.flags &= ~EWS_HTTP_FLAGS_REQUEST_CHUNKED_LINE;
+                return false;
+            /// anything else is an error
+            } else {
+                http_error(sess, 400, "Bad Request");
+                sess->sock->flags |= EWS_SOCK_FLAG_PEND_CLOSE;
+                return true;
+            }
+        } else {
+            if (data->buflen < MIN(sizeof(data->buf),
+                    request->chunked_size - request->chunked_pos)) {
+                return true;
+            }
+            sess->data.chunk = (char *) request->buf;
+            sess->data.chunk_len = MIN(data->buflen,
+                    request->chunked_size - request->chunked_pos);
+        }
+    } else {
+        sess->data.chunk = (char *) request->buf;
+        sess->data.chunk_len = MIN(data->buflen, request->length);
+    }
 
     call_handler(sess);
 
-    return true;
+    if (data->block.flags & EWS_HTTP_FLAGS_REQUEST_CHUNKED) {
+        len = MIN(data->buflen, request->chunked_size -
+                request->chunked_pos) - sess->data.chunk_len;
+        request->chunked_pos += len;
+        if (request->chunked_pos == request->chunked_size) {
+            data->block.flags |= EWS_HTTP_FLAGS_REQUEST_CHUNKED_LINE;
+        }
+    } else if (request->length != SIZE_MAX) {
+        len = MIN(data->buflen, request->length) - sess->data.chunk_len;
+        request->length -= len;
+        if (request->length == 0) {
+            data->block.state = EWS_SESS_RESPONSE_BEGIN;
+        }
+    }
+    data->bufpos += len;
+    data->buflen -= len;
+
+    return data->buflen == 0;
 }
 
 static void response_begin(ews_sess_t *sess)
 {
-    // ews_http_data_t *data = container_of(sess, ews_http_data_t, sess);
-    // ews_http_request_t *request = &data->block.request;
-
     call_handler(sess);
 }
 
 static void response_header(ews_sess_t *sess)
 {
-    // ews_http_data_t *data = container_of(sess, ews_http_data_t, sess);
-    // ews_http_request_t *request = &data->block.request;
-
     call_handler(sess);
 }
 
 static void response_body(ews_sess_t *sess)
 {
-    // ews_http_data_t *data = container_of(sess, ews_http_data_t, sess);
-    // ews_http_request_t *request = &data->block.request;
-
     call_handler(sess);
 }
 
@@ -553,6 +670,11 @@ static void finalize(ews_sess_t *sess)
         return;
     }
 
+    if (data->block.state == EWS_SESS_RESPONSE_BODY &&
+            data->block.flags & EWS_HTTP_FLAGS_RESPONSE_CHUNKED) {
+        http_raw_send(sess, "0\r\n\r\n", 5);
+    }
+
     if (data->block.route) {
         data->block.state = EWS_HTTP_FINALIZE;
         data->block.state_count = 0;
@@ -563,6 +685,7 @@ static void finalize(ews_sess_t *sess)
         sock->ops->shutdown(sock);
     }
 
+    free((void *) data->block.request.boundary);
     memset(&data->block, 0, sizeof(data->block));
 }
 

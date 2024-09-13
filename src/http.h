@@ -36,14 +36,23 @@ enum ews_http_flags {
     EWS_HTTP_FLAGS_FINALIZED            =  1 <<  0,
     EWS_HTTP_FLAGS_KEEPALIVE            =  1 <<  1,
     EWS_HTTP_FLAGS_REQUEST_CHUNKED      =  1 <<  2,
-    EWS_HTTP_FLAGS_REQUEST_MULTIPART    =  1 <<  3,
-    EWS_HTTP_FLAGS_RESPONSE_CHUNKED     =  1 <<  4,
+    EWS_HTTP_FLAGS_REQUEST_CHUNKED_LINE =  1 <<  3,
+    EWS_HTTP_FLAGS_REQUEST_MULTIPART    =  1 <<  4,
+    EWS_HTTP_FLAGS_RESPONSE_CHUNKED     =  1 <<  5,
 };
 
 /// http request struct
 struct ews_http_request {
     uint8_t *buf;
     ssize_t buflen;
+
+    size_t length;
+
+    size_t chunked_size;
+    size_t chunked_pos;
+
+    const char *boundary;
+    size_t boundary_len;
 };
 
 /// http response struct
