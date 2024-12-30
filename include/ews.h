@@ -16,14 +16,20 @@ extern "C" {
 /// @defgroup types Types
 /// @{
 
-/// web server configuration type
-typedef struct ews_config ews_config_t;
-
 /// web server type
 typedef struct ews ews_t;
 
+/// web server configuration type
+typedef struct ews_config ews_config_t;
+
 /// http data type
 typedef struct ews_http ews_http_t;
+
+/// http ops type
+typedef struct ews_http_ops ews_http_ops_t;
+
+/// http session type
+typedef struct ews_http_sess ews_http_sess_t;
 
 /// http route type
 typedef struct ews_route ews_route_t;
@@ -33,18 +39,6 @@ typedef uint8_t ews_state_t;
 
 /// session flags type
 typedef uint16_t ews_http_flags_t;
-
-/// methods type
-typedef uint8_t ews_method_t;
-
-/// http ops type
-typedef struct ews_http_ops ews_http_ops_t;
-
-/// http data type
-typedef struct ews_http_data ews_http_data_t;
-
-/// http session type
-typedef struct ews_http_sess ews_http_sess_t;
 
 /// route status type
 typedef int8_t ews_status_t;
@@ -114,7 +108,6 @@ bool ews_add_client_cert(ews_t *ews, const uint8_t *crt, int crt_len);
 #define EWS_STATE_REQ_BDY       0x01
 #define EWS_STATE_REQ_MP        0x04
 #define EWS_STATE_REQ_MP_BDY    0x05
-
 #define EWS_STATE_RSP           0x08
 #define EWS_STATE_RSP_BDY       0x09
 #define EWS_STATE_FIN           0xFF
@@ -193,10 +186,16 @@ struct ews_http {
 #ifndef EWS_PRIVATE_DEFS
 /// http session struct (public view)
 struct ews_http_sess {
+    /// current route handler
     const ews_route_t *route;
+    /// current session state
     const ews_state_t state;
+    /// session flags
     const ews_http_flags_t flags;
+    /// current state iteration
     const int state_count;
+    /// user session data
+    void *user;
 };
 #endif
 

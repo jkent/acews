@@ -53,17 +53,18 @@ struct ews_http_rsp {
 
 typedef struct ews_http_sess ews_http_sess_t;
 
-/// http session data (private view)
+/// http session (private view)
 struct ews_http_sess {
     const ews_route_t *route;
     ews_state_t state;
     ews_http_flags_t flags;
     int state_count;
+    void *user;
     ews_http_req_t req;
     ews_http_rsp_t rsp;
 };
 
-/// http session instance (private view)
+/// http instance (private view)
 struct ews_http {
     const ews_http_ops_t *ops;
     ews_http_conn_t conn;
