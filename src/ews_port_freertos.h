@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#ifdef __cplusplus
+#if defined(__cplusplus)
 extern "C" {
 #endif
 
@@ -10,7 +10,7 @@ extern "C" {
 #define INC_STR(x) __INC_STR(x)
 #define __INC_STR(x) #x
 #define INC_PATH_CAT(x, y) x/y
-#ifdef FREERTOS_BASE
+#if defined(FREERTOS_BASE)
 # define FREERTOS_INC(file) INC_STR(INC_PATH_CAT(FREERTOS_BASE, file))
 #else
 # define FREERTOS_INC(file) INC_STR(file)
@@ -317,6 +317,6 @@ static inline void ews_timer_stop(ews_timer_t *timer)
 /// @}
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifdef __cplusplus
+#if defined(__cplusplus)
 } // extern "C"
 #endif

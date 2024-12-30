@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#ifdef __cplusplus
+#if defined(__cplusplus)
 extern "C" {
 #endif
 
@@ -175,7 +175,7 @@ struct ews_http_ops {
     int (*sendf)(ews_http_t *http, const char *fmt, ...);
 };
 
-#ifndef EWS_PRIVATE_DEFS
+#if !defined(EWS_PRIVATE_DEFS)
 /// http struct (public view)
 struct ews_http {
     /// http ops
@@ -183,7 +183,7 @@ struct ews_http {
 };
 #endif
 
-#ifndef EWS_PRIVATE_DEFS
+#if !defined(EWS_PRIVATE_DEFS)
 /// http session struct (public view)
 struct ews_http_sess {
     /// current route handler
@@ -246,6 +246,6 @@ ews_status_t ews_routes_test_handler(ews_http_t *http, ews_http_sess_t *sess);
 /// @}
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifdef __cplusplus
+#if defined(__cplusplus)
 } // extern "C"
 #endif

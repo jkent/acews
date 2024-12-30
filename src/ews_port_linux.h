@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#ifdef __cplusplus
+#if defined(__cplusplus)
 extern "C" {
 #endif
 
@@ -371,6 +371,6 @@ static inline void ews_timer_stop(ews_timer_t *timer)
 /// @}
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifdef __cplusplus
+#if defined(__cplusplus)
 } // extern "C"
 #endif
