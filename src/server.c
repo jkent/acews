@@ -175,7 +175,7 @@ void ews_destroy(ews_t *ews)
 }
 
 #if CONFIG_EWS_HTTPS_CLIENTS > 0 || defined(__DOXYGEN__)
-bool ews_add_client_cert(ews_t *ews, const uint8_t *crt, size_t crt_len)
+bool ews_add_client_cert(ews_t *ews, const uint8_t *crt, int crt_len)
 {
     int ret;
 

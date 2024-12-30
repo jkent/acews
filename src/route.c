@@ -4,14 +4,18 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "route.h"
+#include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
 #include "ews.h"
+#include "http.h"
+#include "route.h"
 #include "server.h"
 #include "socket.h"
 
 
 static bool ews_route_vappend(ews_t *ews, const char *pattern,
-        ews_route_handler_t handler, size_t argc, va_list args)
+        ews_handler_t handler, int argc, va_list args)
 {
     ews_route_t *route = calloc(1, sizeof(*route) + sizeof(void *) * argc);
     if (route == NULL) {
@@ -28,15 +32,15 @@ static bool ews_route_vappend(ews_t *ews, const char *pattern,
     route->pattern = pattern;
     route->handler = handler;
     route->argc = argc;
-    for (size_t i = 0; i < argc; i++) {
+    for (int i = 0; i < argc; i++) {
         route->argv[i] = va_arg(args, void *);
     }
 
     return true;
 }
 
-bool ews_route_append(ews_t *ews, const char *pattern,
-        ews_route_handler_t handler, size_t argc, ...)
+bool ews_routes_append(ews_t *ews, const char *pattern,
+        ews_handler_t handler, int argc, ...)
 {
     va_list args;
     bool ret;
@@ -48,7 +52,7 @@ bool ews_route_append(ews_t *ews, const char *pattern,
     return ret;
 }
 
-void ews_route_clear(ews_t *ews)
+void ews_routes_clear(ews_t *ews)
 {
     assert(ews != NULL);
 
@@ -62,58 +66,70 @@ void ews_route_clear(ews_t *ews)
     ews->route_last = NULL;
 }
 
-ews_route_status_t ews_route_404_handler(ews_sess_t *sess,
-        ews_sess_state_t state)
+ews_status_t ews_route_404_handler(ews_http_t *http, ews_http_sess_t *sess)
 {
-    switch (state) {
-    case EWS_SESS_REQUEST_BEGIN:
-        return EWS_ROUTE_STATUS_FOUND;
+    switch (sess->state) {
+    case EWS_STATE_REQ:
+        return EWS_STATUS_MATCH;
 
-    case EWS_SESS_REQUEST_HEADER:
-    case EWS_SESS_REQUEST_BODY:
-        return EWS_ROUTE_STATUS_NEXT;
+    case EWS_STATE_RSP:
+        http->ops->start_rsp(http, 404, "Not Found");
+        http->ops->send_hdr(http, "Content-Length", "18");
+        return EWS_STATUS_NEXT;
 
-    case EWS_SESS_RESPONSE_BEGIN:
-        sess->ops->error(sess, 404, "Not Found");
-    default:
-        return EWS_ROUTE_STATUS_DONE;
+    case EWS_STATE_RSP_BDY:
+        http->ops->send(http, "<h1>Not Found</h1>", 18);
+        return EWS_STATUS_DONE;
     }
+
+    return EWS_STATUS_SKIP;
 }
 
 const ews_route_t ews_route_404 = {
     .handler = ews_route_404_handler,
 };
 
-ews_route_status_t ews_route_test_handler(ews_sess_t *sess,
-        ews_sess_state_t state)
+ews_status_t ews_routes_test_handler(ews_http_t *http, ews_http_sess_t *sess)
 {
-    switch (state) {
-    case EWS_SESS_REQUEST_BEGIN:
-        return EWS_ROUTE_STATUS_FOUND;
+    const char *name, *value;
+    char buf[1024];
+    int ret;
 
-    case EWS_SESS_REQUEST_HEADER:
-        printf("header: (%lu)%s: (%lu)%s\n", sess->data.name_len,
-                sess->data.name, sess->data.value_len, sess->data.value);
-        return EWS_ROUTE_STATUS_NEXT;
+    switch (sess->state) {
+    case EWS_STATE_REQ:
+        while (http->ops->get_hdr(http, &name, &value) > 0) {
+            printf("hdr: %s: %s\n", name, value);
+        }
+        return EWS_STATUS_MATCH;
 
-    case EWS_SESS_REQUEST_BODY:
-        printf("body: (%lu)\"%.*s\"\n", sess->data.chunk_len,
-                (int) sess->data.chunk_len, sess->data.chunk);
-        sess->ops->recv(sess, NULL, sess->data.chunk_len);
-        return EWS_ROUTE_STATUS_NEXT;
+    case EWS_STATE_REQ_BDY:
+        while ((ret = http->ops->recv(http, buf, sizeof(buf))) > 0) {
+            printf("bdy: (%d)\"%.*s\"\n", ret, (int) ret, buf);
+        }
+        break;
 
-    case EWS_SESS_RESPONSE_BEGIN:
-        sess->ops->status(sess, 200, "OK");
-        return EWS_ROUTE_STATUS_NEXT;
+    case EWS_STATE_REQ_MP:
+        while (http->ops->get_hdr(http, &name, &value) > 0) {
+            printf("mp_hdr: %s: %s\n", name, value);
+        }
+        break;
 
-    case EWS_SESS_RESPONSE_HEADER:
-        //sess->ops->header(sess, "Content-Length", "12");
-        sess->ops->header(sess, "Transfer-Encoding", "chunked");
-        return EWS_ROUTE_STATUS_NEXT;
+    case EWS_STATE_REQ_MP_BDY:
+        while ((ret = http->ops->recv(http, buf, sizeof(buf))) > 0) {
+            printf("mp_bdy: (%d)\"%.*s\"\n", ret, (int) ret, buf);
+        }
+        break;
 
-    case EWS_SESS_RESPONSE_BODY:
-        sess->ops->send(sess, "Hello world!", 12);
-    default:
-        return EWS_ROUTE_STATUS_DONE;
+    case EWS_STATE_RSP:
+        http->ops->start_rsp(http, 200, "OK");
+        http->ops->send_hdr(http, "Content-Length", "12");
+        // http->ops->send_hdr(http, "Transfer-Encoding", "chunked");
+        break;
+
+    case EWS_STATE_RSP_BDY:
+        http->ops->send(http, "Hello world!", 12);
+        break;
     }
+
+    return EWS_STATUS_NEXT;
 }

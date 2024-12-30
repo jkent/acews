@@ -2,6 +2,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -13,44 +14,57 @@
 # include <mbedtls/ssl.h>
 #endif
 
-#include "socket.h"
+#define EWS_PRIVATE_DEFS
 #include "client.h"
+#include "ews.h"
 #include "ews_port.h"
 #include "http.h"
 #include "log.h"
 #include "server.h"
+#include "socket.h"
 
+
+static int ews_sock_sendf(ews_sock_t *sock, const char *fmt, ...);
 
 #if CONFIG_EWS_HTTP_CLIENTS > 0
-static ssize_t ews_sock_send(ews_sock_t *sock, const void *buf, size_t len)
+static int ews_sock_send(ews_sock_t *sock, const void *buf, int len)
 {
-    ssize_t ret;
+    int ret;
 
     if (sock->flags & EWS_SOCK_FLAG_SHUTDOWN) {
         return -1;
     }
 
+    if (len < 0) {
+        len = strlen((const char *) buf);
+    }
+
     ret = send(sock->fd, buf, len, 0);
     if (ret < 0) {
-        if (errno = ECONNRESET) {
+        if (errno == ECONNRESET) {
             LOGI("connection reset by peer");
+            /* closed */
         } else if (errno == EAGAIN) {
-            return -1;
+            return 0;
         }
         sock->flags |= EWS_SOCK_FLAG_PEND_CLOSE;
         return -1;
     }
+
     return ret;
 }
 
-static ssize_t ews_sock_recv(ews_sock_t *sock, void *buf, size_t len)
+static int ews_sock_recv(ews_sock_t *sock, void *buf, int len)
 {
-    ssize_t ret = recv(sock->fd, buf, len, 0);
+    int ret;
+
+    ret = recv(sock->fd, buf, len, 0);
     if (ret < 0) {
         if (errno == ECONNRESET) {
             LOGI("connection reset by peer");
+            /* closed */
         } else if (errno == EAGAIN) {
-            return -1;
+            return 0;
         }
         sock->flags |= EWS_SOCK_FLAG_PEND_CLOSE;
         return -1;
@@ -60,22 +74,47 @@ static ssize_t ews_sock_recv(ews_sock_t *sock, void *buf, size_t len)
     return ret;
 }
 
-static size_t ews_sock_avail(ews_sock_t *sock)
+static bool ews_sock_send_ok(ews_sock_t *sock)
 {
-    return 0;
+    struct pollfd fds[1];
+
+    if (sock->flags & EWS_SOCK_FLAG_SHUTDOWN) {
+        return false;
+    }
+
+    fds[0].fd = sock->fd;
+    fds[0].events = POLLOUT;
+
+    if (poll(fds, 1, 0) == 1) {
+        if (fds[0].revents & POLLOUT) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
-static void ews_sock_set_block(ews_sock_t *sock, bool block)
+static bool ews_sock_recv_ok(ews_sock_t *sock)
 {
-    if (block) {
-        fcntl(sock->fd, F_SETFL, fcntl(sock->fd, F_GETFL) & ~O_NONBLOCK);
-    } else {
-        fcntl(sock->fd, F_SETFL, fcntl(sock->fd, F_GETFL) | O_NONBLOCK);
+    struct pollfd fds[1];
+
+    fds[0].fd = sock->fd;
+    fds[0].events = POLLIN;
+
+    if (poll(fds, 1, 0) == 1) {
+        if (fds[0].revents & POLLIN) {
+            return true;
+        }
     }
+
+    return false;
 }
 
 static void ews_sock_shutdown(ews_sock_t *sock)
 {
+    if (sock->flags & EWS_SOCK_FLAG_SHUTDOWN) {
+        return;
+    }
     LOGD("#%d shutdown", sock->fd);
     shutdown(sock->fd, SHUT_WR);
     sock->flags |= EWS_SOCK_FLAG_SHUTDOWN;
@@ -90,9 +129,10 @@ static void ews_sock_close(ews_sock_t *sock)
 
 static const struct ews_sock_ops ews_sock_ops = {
     .send = ews_sock_send,
+    .sendf = ews_sock_sendf,
     .recv = ews_sock_recv,
-    .avail = ews_sock_avail,
-    .set_block = ews_sock_set_block,
+    .send_ok = ews_sock_send_ok,
+    .recv_ok = ews_sock_recv_ok,
     .shutdown = ews_sock_shutdown,
     .close = ews_sock_close,
 };
@@ -121,7 +161,7 @@ void ews_connect(ews_sock_t *sock)
 #endif
 
 #if CONFIG_EWS_HTTPS_CLIENTS > 0
-static ssize_t ews_sock_send_tls(ews_sock_t *sock, const void *buf, size_t len)
+static int ews_sock_send_tls(ews_sock_t *sock, const void *buf, int len)
 {
     ews_client_tls_t *client = (ews_client_tls_t *) sock;
     int ret;
@@ -130,21 +170,27 @@ static ssize_t ews_sock_send_tls(ews_sock_t *sock, const void *buf, size_t len)
         return -1;
     }
 
+    if (len < 0) {
+        len = strlen((const char *) buf);
+    }
+
     ret = mbedtls_ssl_write(&client->ssl_ctx, buf, len);
     if (ret < 0) {
         if (ret == MBEDTLS_ERR_SSL_WANT_READ ||
                 ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
-            return -1;
+            return 0;
         } else if (ret == MBEDTLS_ERR_NET_CONN_RESET) {
             LOGI("connection reset by peer");
+            /* closed */
         }
         sock->flags |= EWS_SOCK_FLAG_PEND_CLOSE;
         return -1;
     }
+
     return ret;
 }
 
-static ssize_t ews_sock_recv_tls(ews_sock_t *sock, void *buf, size_t len)
+static int ews_sock_recv_tls(ews_sock_t *sock, void *buf, int len)
 {
     ews_client_tls_t *client = (ews_client_tls_t *) sock;
     int ret;
@@ -153,9 +199,10 @@ static ssize_t ews_sock_recv_tls(ews_sock_t *sock, void *buf, size_t len)
     if (ret < 0) {
         if (ret == MBEDTLS_ERR_SSL_WANT_READ ||
                 ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
-            return -1;
+            return 0;
         } else if (ret == MBEDTLS_ERR_NET_CONN_RESET) {
             LOGI("connection reset by peer");
+            /* closed */
         } else if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
             LOGI("peer notified us about closure");
             sock->flags |= EWS_SOCK_FLAG_PEND_CLOSE;
@@ -166,25 +213,29 @@ static ssize_t ews_sock_recv_tls(ews_sock_t *sock, void *buf, size_t len)
     } else if (ret == 0) {
         sock->flags |= EWS_SOCK_FLAG_PEND_CLOSE;
     }
+
     return ret;
 }
 
-static size_t ews_sock_avail_tls(ews_sock_t *sock)
+static bool ews_sock_recv_ok_tls(ews_sock_t *sock)
 {
     ews_client_tls_t *client = (ews_client_tls_t *) sock;
+    struct pollfd fds[1];
 
-    return mbedtls_ssl_get_bytes_avail(&client->ssl_ctx);
-}
-
-static void ews_sock_set_block_tls(ews_sock_t *sock, bool block)
-{
-    ews_client_tls_t *client = (ews_client_tls_t *) sock;
-
-    if (block) {
-        mbedtls_net_set_block(client->ssl_ctx.p_bio);
-    } else {
-        mbedtls_net_set_nonblock(client->ssl_ctx.p_bio);
+    if (mbedtls_ssl_get_bytes_avail(&client->ssl_ctx) > 0) {
+        return true;
     }
+
+    fds[0].fd = sock->fd;
+    fds[0].events = POLLIN;
+
+    if (poll(fds, 1, 0) == 1) {
+        if (fds[0].revents & POLLIN) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static void ews_sock_shutdown_tls(ews_sock_t *sock)
@@ -208,9 +259,10 @@ static void ews_sock_close_tls(ews_sock_t *sock)
 
 static const struct ews_sock_ops ews_tls_sock_ops = {
     .send = ews_sock_send_tls,
+    .sendf = ews_sock_sendf,
     .recv = ews_sock_recv_tls,
-    .avail = ews_sock_avail_tls,
-    .set_block = ews_sock_set_block_tls,
+    .send_ok = ews_sock_send_ok,
+    .recv_ok = ews_sock_recv_ok_tls,
     .shutdown = ews_sock_shutdown_tls,
     .close = ews_sock_close_tls,
 };
@@ -271,3 +323,28 @@ void ews_connect_tls(ews_sock_t *sock)
     ews_thread_init(&client->thread, ews_connect_tls_task, sock, 1024);
 }
 #endif
+
+static int ews_sock_vsendf(ews_sock_t *sock, const char *fmt, va_list va)
+{
+    va_list va2;
+    int len;
+    char *buf;
+
+    va_copy(va2, va);
+    len = vsnprintf(NULL, 0, fmt, va);
+    buf = alloca(len);
+    vsprintf(buf, fmt, va2);
+
+    return sock->ops->send(sock, buf, len);
+}
+
+static int ews_sock_sendf(ews_sock_t *sock, const char *fmt, ...)
+{
+    va_list va;
+    int ret;
+
+    va_start(va, fmt);
+    ret = ews_sock_vsendf(sock, fmt, va);
+    va_end(va);
+    return ret;
+}

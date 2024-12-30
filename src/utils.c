@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -41,10 +42,10 @@ bool fnmatch(const char *pattern, const char *string)
     }
 }
 
-ssize_t find(const uint8_t *buf, size_t hlen, const char *s)
+int find(const char *buf, int hlen, const char *s)
 {
-    size_t nlen = strlen(s);
-    size_t i = 0, j = 0;
+    int nlen = strlen(s);
+    int i = 0, j = 0;
 
     if (hlen < nlen) {
         return -1;
@@ -63,10 +64,10 @@ ssize_t find(const uint8_t *buf, size_t hlen, const char *s)
     return -1;
 }
 
-ssize_t findp(const uint8_t *buf, size_t hlen, const char *s)
+int findp(const char *buf, int hlen, const char *s)
 {
-    size_t nlen = strlen(s);
-    size_t i = 0, j = 0;
+    int nlen = strlen(s);
+    int i = 0, j = 0;
 
     while (i <= hlen) {
         if (buf[i + j] == s[j]) {
@@ -79,4 +80,85 @@ ssize_t findp(const uint8_t *buf, size_t hlen, const char *s)
         }
     }
     return -1;
+}
+
+void parse_uri(const char *uri, char *path, const char **query)
+{
+    const char *pi = uri;
+    char *po = path;
+    int len = 0;
+
+    if (query) {
+        *query = NULL;
+    }
+
+    while (*pi) {
+        if (*pi == '%' && isxdigit(*(pi + 1)) && isxdigit(*(pi + 2))) {
+            pi++;
+            *po = (toupper(*pi) - (isdigit(*pi) ? '0' : 'A' - 10)) << 4;
+            pi++;
+            *po |= (toupper(*pi) - (isdigit(*pi) ? '0' : 'A' - 10));
+            pi++;
+            po++;
+        } else if (*pi == '+') {
+            pi++;
+            *po++ = ' ';
+        } else if (*pi == '/') {
+            if (*(pi + 1) == '.') {
+                if (*(pi + 2) == '\0' || *(pi + 2) == '/') {
+                    pi += 2;
+                    continue;
+                } else if (*(pi + 2) == '.') {
+                    if ((*pi + 3) == '\0' || (*pi + 3) == '/') {
+                        pi += 3;
+                        while (len > 0) {
+                            po--;
+                            len--;
+                            if (*po == '/') {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                }
+            } else if (len > 0 && *(po - 1) == '/') {
+                pi++;
+                continue;
+            }
+            *po++ = *pi++;
+        } else if (*pi == '?') {
+            pi++;
+            if (query) {
+                *query = pi;
+            }
+            break;
+        } else {
+            *po++ = *pi++;
+        }
+        len++;
+    }
+
+    *po++ = '\0';
+    if (query && *query) {
+        po = (char *) *query;
+
+        while (*pi) {
+            if (*pi == '%' && isxdigit(*(pi + 1)) && isxdigit(*(pi + 2))) {
+                pi++;
+                *po = (toupper(*pi) - (isdigit(*pi) ? '0' : 'A' - 10)) << 4;
+                pi++;
+                *po |= (toupper(*pi) - (isdigit(*pi) ? '0' : 'A' - 10));
+                pi++;
+                po++;
+            } else if (*pi == '+') {
+                pi++;
+                *po++ = ' ';
+            } else {
+                *po++ = *pi++;
+            }
+            len++;
+        }
+
+        *po++ = '\0';
+    }
 }

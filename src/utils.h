@@ -7,5 +7,6 @@
 
 
 bool fnmatch(const char *pattern, const char *string);
-ssize_t find(const uint8_t *buf, size_t hlen, const char *s);
-ssize_t findp(const uint8_t *buf, size_t hlen, const char *s);
+int find(const char *buf, int hlen, const char *s);
+int findp(const char *buf, int hlen, const char *s);
+void parse_uri(const char *uri, char *path, const char **query);

@@ -13,11 +13,49 @@ extern "C" {
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// @defgroup ews Web Server
+/// @defgroup types Types
 /// @{
 
 /// web server configuration type
 typedef struct ews_config ews_config_t;
+
+/// web server type
+typedef struct ews ews_t;
+
+/// http data type
+typedef struct ews_http ews_http_t;
+
+/// http route type
+typedef struct ews_route ews_route_t;
+
+/// session state type
+typedef uint8_t ews_state_t;
+
+/// session flags type
+typedef uint16_t ews_http_flags_t;
+
+/// methods type
+typedef uint8_t ews_method_t;
+
+/// http ops type
+typedef struct ews_http_ops ews_http_ops_t;
+
+/// http data type
+typedef struct ews_http_data ews_http_data_t;
+
+/// http session type
+typedef struct ews_http_sess ews_http_sess_t;
+
+/// route status type
+typedef int8_t ews_status_t;
+
+/// route handler type
+typedef ews_status_t (*ews_handler_t)(ews_http_t *http, ews_http_sess_t *sess);
+
+/// @}
+////////////////////////////////////////////////////////////////////////////////
+/// @defgroup ews Server
+/// @{
 
 /// web server configuration struct
 struct ews_config {
@@ -40,16 +78,13 @@ struct ews_config {
     /// https server certificiate
     const void *https_crt;
     /// https server certificate length
-    size_t https_crt_len;
+    int https_crt_len;
     /// https server private key
     const void *https_pk;
     /// https server private key length
-    size_t https_pk_len;
+    int https_pk_len;
 #endif
 };
-
-/// web server type
-typedef struct ews ews_t;
 
 /// initialize and start web server
 /// @param[in] config server configuration struct
@@ -66,178 +101,128 @@ void ews_destroy(ews_t *ews);
 /// @param[in] crt client certificate
 /// @param[in] crt_len client certificate length
 /// @return @b true if successful, @b false otherwise
-bool ews_add_client_cert(ews_t *ews, const uint8_t *crt, size_t crt_len);
+bool ews_add_client_cert(ews_t *ews, const uint8_t *crt, int crt_len);
 #endif
 
 /// @}
 ////////////////////////////////////////////////////////////////////////////////
-/// @defgroup ews_sessions Sessions
+/// @defgroup ews_http HTTP
 /// @{
 
-/// session state type
-typedef enum ews_sess_state ews_sess_state_t;
+/// session states
+#define EWS_STATE_REQ           0x00
+#define EWS_STATE_REQ_BDY       0x01
+#define EWS_STATE_REQ_MP        0x04
+#define EWS_STATE_REQ_MP_BDY    0x05
 
-/// session state enum
-enum ews_sess_state  {
-    /// request begin: user decides if request method and path are OK
-    EWS_SESS_REQUEST_BEGIN      =  0 | 0x00,
-    /// request header: called once per request header
-    EWS_SESS_REQUEST_HEADER     =  1 | 0x00,
-    /// request body: called until user reads or ignores all request data
-    EWS_SESS_REQUEST_BODY       =  2 | 0x00,
+#define EWS_STATE_RSP           0x08
+#define EWS_STATE_RSP_BDY       0x09
+#define EWS_STATE_FIN           0xFF
 
-    /// response begin: user sends http status
-    EWS_SESS_RESPONSE_BEGIN     =  0 | 0x10,
-    /// response header: user sends one header and signals next state when ready
-    EWS_SESS_RESPONSE_HEADER    =  1 | 0x10,
-    /// response body:user sends body and signals next state (done) when ready
-    EWS_SESS_RESPONSE_BODY      =  2 | 0x10,
+#define EWS_FLAGS_HTTP11        (1 <<  0)
 
-    /// finalize: called if state is > EWS_SESS_REQUEST_BEGIN
-    EWS_HTTP_FINALIZE           = 15 | 0x30,
-};
+/// http ops struct
+struct ews_http_ops {
+    /// get header, starting with pesudo headers :method, :path, and :scheme
+    /// @param[inout] http session instance
+    /// @param[in] name header name pointer
+    /// @param[in] value header value pointer
+    /// @returns < 0 on error, 0 no more headers, > 0 header valid
+    int (*get_hdr)(ews_http_t *http, const char **name, const char **value);
 
-/// session methods type
-typedef enum ews_sess_methods ews_sess_methods_t;
+    /// recv data
+    /// @param[inout] http session instance
+    /// @param[out] buf buffer, can be null to discard data
+    /// @param[in] buf_sz buffer size, -1 for all (useful for discarding)
+    /// @returns < 0 on error, 0 try again later, > 0 bytes received
+    /// @note this function may not return the ammount of data requested, this
+    ///       is expected behavior
+    int (*recv)(ews_http_t *http, char *buf, int buf_sz);
 
-/// session ops type
-typedef struct ews_sess_ops ews_sess_ops_t;
+    /// send http status
+    /// @param[inout] http session instance
+    /// @param[in] code http status code
+    /// @param[in] status http status string
+    /// @returns < 0 on error, 0 try again later, > 0 rsp header sent
+    /// @note this function tries best effort to send all the data, but can
+    ///       timeout and will return error in that case.
+    int (*start_rsp)(ews_http_t *http, int code, const char *status);
 
-/// session data type
-typedef struct ews_sess_data ews_sess_data_t;
+    /// send header
+    /// @param[inout] http session instance
+    /// @param[in] name header name
+    /// @param[in] value header value format string
+    /// @returns < 0 on error, 0 try again later, > 0 header sent
+    int (*send_hdr)(ews_http_t *http, const char *name, const char *value);
 
-/// session type
-typedef struct ews_sess ews_sess_t;
+    /// send header with formatted value
+    /// @param[inout] http session instance
+    /// @param[in] name header name
+    /// @param[in] fmt header value format string
+    /// @param[in] ... header value format arguments
+    /// @returns < 0 on error, 0 try again later, > 0 header sent
+    int (*sendf_hdr)(ews_http_t *http, const char *name, const char *fmt, ...);
 
-/// socket type
-typedef struct ews_sock ews_sock_t;
-
-/// session methods enum
-enum ews_sess_methods {
-    EWS_SESS_METHOD_OTHER,
-    EWS_SESS_METHOD_CONNECT,
-    EWS_SESS_METHOD_DELETE,
-    EWS_SESS_METHOD_GET,
-    EWS_SESS_METHOD_HEAD,
-    EWS_SESS_METHOD_OPTIONS,
-    EWS_SESS_METHOD_PATCH,
-    EWS_SESS_METHOD_POST,
-    EWS_SESS_METHOD_PUT,
-    EWS_SESS_METHOD_TRACE,
-};
-
-/// session operations struct
-struct ews_sess_ops {
-    /// session recv data
-    /// @param[in] sess session
-    /// @param[out] buf buffer
-    /// @param[in] len buffer size
-    /// @returns -1 on error, otherwise written size
-    ssize_t (*recv)(ews_sess_t *sess, void *buf, size_t len);
-    /// session send data
-    /// @param[in] sess session
+    /// send data
+    /// @param[inout] http session instance
     /// @param[in] buf buffer
-    /// @param[in] len buffer size
-    /// @returns -1 on error, otherwise read size
-    ssize_t (*send)(ews_sess_t *sess, const void *buf, size_t len);
-    /// session send printf formatted data
-    /// @param[in] sess session
+    /// @param[in] buf_sz buffer size, -1 for strlen()
+    /// @returns < 0 on error, 0 try again later, > 0 num bytes transmitted
+    /// @note this function tries best effort to send all the data, but can
+    ///       timeout and will return error in that case.
+    int (*send)(ews_http_t *http, const char *buf, int buf_sz);
+
+    /// send formatted data
+    /// @param[inout] http session instance
     /// @param[in] fmt format string
     /// @param[in] ... format arguments
-    void (*sendf)(ews_sess_t *sess, const char *fmt, ...);
-    /// session send status
-    /// @param[in] sess session
-    /// @param[in] code http response code
-    /// @param[in] msg http response message
-    void (*status)(ews_sess_t *sess, int code, const char *msg);
-    /// session send error
-    /// @param[in] sess session
-    /// @param[in] code http response code
-    /// @param[in] msg error message
-    void (*error)(ews_sess_t *sess, int code, const char *msg);
-    /// session send header
-    /// @param[in] sess session
-    /// @param[in] name header name
-    /// @param[in] value header value
-    void (*header)(ews_sess_t *sess, const char *name, const char *value);
+    /// @returns < 0 on error, 0 try again later, > 0 num bytes transmitted
+    /// @note this function tries best effort to send all the data, but can
+    ///       timeout and will return error in that case.
+    int (*sendf)(ews_http_t *http, const char *fmt, ...);
 };
 
-/// session data struct
-struct ews_sess_data {
-    union {
-        /// http request path, only valid during request_begin
-        char *path;
-        /// header name, only valid during request_header
-        char *name;
-        /// body chunk, only valid during request_body
-        char *chunk;
-    };
-    union {
-        /// http request path length, only valid during request_begin
-        size_t path_len;
-        /// header name length, only valid during request_header
-        size_t name_len;
-        /// body chunk length, only valid during request_body
-        size_t chunk_len;
-    };
-    union {
-        /// http request query string, only valid during request_begin
-        char *query;
-        /// header value, only valid during request_header
-        char *value;
-    };
-    union {
-        /// http_request query string length, only valid during request_begin
-        size_t query_len;
-        /// header value length, only valid during request_header
-        size_t value_len;
-    };
-    /// http request method
-    uint8_t method;
+#ifndef EWS_PRIVATE_DEFS
+/// http struct (public view)
+struct ews_http {
+    /// http ops
+    ews_http_ops_t *ops;
 };
+#endif
 
-/// session struct
-struct ews_sess {
-    /// socket
-    ews_sock_t *sock;
-    /// session ops
-    const ews_sess_ops_t *ops;
-    /// session data
-    ews_sess_data_t data;
+#ifndef EWS_PRIVATE_DEFS
+/// http session struct (public view)
+struct ews_http_sess {
+    const ews_route_t *route;
+    const ews_state_t state;
+    const ews_http_flags_t flags;
+    const int state_count;
 };
+#endif
 
 /// @}
 ////////////////////////////////////////////////////////////////////////////////
 /// @defgroup ews_routes Routes
 /// @{
 
-/// route status type
-typedef enum ews_route_status ews_route_status_t;
-
-/// route status enum
-enum ews_route_status {
-    /// route error status, all states
-    EWS_ROUTE_STATUS_ERROR = -1,
-    /// route close status, all states
-    EWS_ROUTE_STATUS_CLOSE,
-
-    /// route not found status, for request begin state
-    EWS_ROUTE_STATUS_NOT_FOUND,
-    /// route found status, for request begin state
-    EWS_ROUTE_STATUS_FOUND,
-
-    /// route next state, for request and resposne states
-    EWS_ROUTE_STATUS_NEXT,
-    /// route done state, for request and response states
-    EWS_ROUTE_STATUS_DONE,
-
-    /// route more state, for response states except response begin
-    EWS_ROUTE_STATUS_MORE,
+enum {
+    /// error status, any state
+    EWS_STATUS_ERROR = -2,
+    /// close status, any state
+    EWS_STATUS_CLOSE,
+    /// no match, only for EWS_STATE_REQ
+    EWS_STATUS_NOMATCH,
+    /// match, only for EWS_STATE_REQ
+    EWS_STATUS_MATCH,
+    /// more, for all states except EWS_STATE_REQ and EWS_STATE_FIN
+    EWS_STATUS_MORE,
+    /// skip, for all states except EWS_STATE_REQ
+    EWS_STATUS_SKIP,
+    /// next, for all states except EWS_STATE_REQ
+    EWS_STATUS_NEXT,
+    /// done, for all states except EWS_STATE_REQ
+    EWS_STATUS_DONE,
 };
-
-/// route handler type
-typedef ews_route_status_t (*ews_route_handler_t)(ews_sess_t *sess,
-        ews_sess_state_t state);
 
 /// append a route to the list of route handlers
 /// @param[in] ews web sever instance
@@ -246,19 +231,18 @@ typedef ews_route_status_t (*ews_route_handler_t)(ews_sess_t *sess,
 /// @param[in] argc the number of arguments to the route handler
 /// @param[inout] ... arguments passed to/from the route handler
 /// @return @b true if successful, @b false otherwise
-bool ews_route_append(ews_t *ews, const char *pattern,
-        ews_route_handler_t handler, size_t argc, ...);
+bool ews_routes_append(ews_t *ews, const char *pattern, ews_handler_t handler,
+        int argc, ...);
 
 /// clear the list of route handlers
 /// @param[in] ews webs server instance
-void ews_route_clear(ews_t *ews);
+void ews_routes_clear(ews_t *ews);
 
 /// a demo route handler to test functionality
 /// @param[in] sess session instance
 /// @param[in] state current session state
 /// @return route handler status
-ews_route_status_t ews_route_test_handler(ews_sess_t *sess,
-        ews_sess_state_t state);
+ews_status_t ews_routes_test_handler(ews_http_t *http, ews_http_sess_t *sess);
 
 /// @}
 ////////////////////////////////////////////////////////////////////////////////

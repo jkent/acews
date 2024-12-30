@@ -11,7 +11,7 @@ typedef struct ews_route ews_route_t;
 struct ews_route {
     ews_route_t *next;
     const char *pattern;
-    ews_route_handler_t handler;
+    ews_handler_t handler;
     int argc;
     void *argv[0];
 };

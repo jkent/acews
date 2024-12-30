@@ -5,78 +5,69 @@
 #include <stdlib.h>
 
 #include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
+#include "ews.h"
 #include "route.h"
 #include "socket.h"
 
 
-/// http version type
-typedef enum ews_http_version ews_http_version_t;
+typedef struct ews_http_conn ews_http_conn_t;
 
-/// http flags type
-typedef enum ews_http_flags ews_http_flags_t;
-
-/// http request type
-typedef struct ews_http_request ews_http_request_t;
-
-/// http response type
-typedef struct ews_http_response ews_http_response_t;
-
-/// http data type
-typedef struct ews_http_data ews_http_data_t;
-
-/// http version enum
-enum ews_http_version {
-    EWS_HTTP_VERSION_09,
-    EWS_HTTP_VERSION_10,
-    EWS_HTTP_VERSION_11,
+/// http connection data
+struct ews_http_conn {
+    ews_sock_t *sock;
+    char buf[CONFIG_EWS_SESSION_BUFSIZE];
+    int bufpos;
+    int buflen;
 };
 
-/// http flags enum
-enum ews_http_flags {
-    EWS_HTTP_FLAGS_FINALIZED            =  1 <<  0,
-    EWS_HTTP_FLAGS_KEEPALIVE            =  1 <<  1,
-    EWS_HTTP_FLAGS_REQUEST_CHUNKED      =  1 <<  2,
-    EWS_HTTP_FLAGS_REQUEST_CHUNKED_LINE =  1 <<  3,
-    EWS_HTTP_FLAGS_REQUEST_MULTIPART    =  1 <<  4,
-    EWS_HTTP_FLAGS_RESPONSE_CHUNKED     =  1 <<  5,
-};
+typedef struct ews_http_req ews_http_req_t;
 
-/// http request struct
-struct ews_http_request {
-    uint8_t *buf;
-    ssize_t buflen;
+/// http request data
+struct ews_http_req {
+    const char *method;
+    const char *path;
+    const char *headers;
+    const char *hdr_name;
 
-    size_t length;
+    const char *x_path;
+    const char *x_query;
 
-    size_t chunked_size;
-    size_t chunked_pos;
+    int length, consumed;
 
     const char *boundary;
-    size_t boundary_len;
+    int boundary_len;
 };
 
-/// http response struct
-struct ews_http_response {
-    size_t length;
+typedef struct ews_http_rsp ews_http_rsp_t;
+
+/// http response data
+struct ews_http_rsp {
+    int length, produced;
 };
 
-/// http data struct
-struct ews_http_data {
-    uint8_t buf[CONFIG_EWS_SESSION_BUFSIZE];
-    size_t bufpos;
-    size_t buflen;
+#define EWS_FLAGS_KEEPALIVE         (1 <<  8)
+#define EWS_FLAGS_RSP_CHUNKED       (1 <<  9)
+#define EWS_FLAGS_RSP_STARTED       (1 << 10)
 
-    ews_sess_t sess;
+typedef struct ews_http_sess ews_http_sess_t;
 
-    struct {
-        uint8_t version;
-        const ews_route_t *route;
-        uint8_t state, prev_state, flags;
-        size_t state_count;
+/// http session data (private view)
+struct ews_http_sess {
+    const ews_route_t *route;
+    ews_state_t state;
+    ews_http_flags_t flags;
+    int state_count;
+    ews_http_req_t req;
+    ews_http_rsp_t rsp;
+};
 
-        ews_http_request_t request;
-        ews_http_response_t response;
-    } block;
+/// http session instance (private view)
+struct ews_http {
+    const ews_http_ops_t *ops;
+    ews_http_conn_t conn;
+    ews_http_sess_t sess;
 };
 
 /// http socket event instance

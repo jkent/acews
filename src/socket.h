@@ -32,10 +32,11 @@ enum ews_sock_flags {
 };
 
 struct ews_sock_ops {
-    ssize_t (*send)(ews_sock_t *sock, const void *buf, size_t len);
-    ssize_t (*recv)(ews_sock_t *sock, void *buf, size_t len);
-    size_t (*avail)(ews_sock_t *sock);
-    void (*set_block)(ews_sock_t *sock, bool block);
+    int (*send)(ews_sock_t *sock, const void *buf, int len);
+    int (*sendf)(ews_sock_t *sock, const char *fmt, ...);
+    int (*recv)(ews_sock_t *sock, void *buf, int len);
+    bool (*send_ok)(ews_sock_t *sock);
+    bool (*recv_ok)(ews_sock_t *sock);
     void (*shutdown)(ews_sock_t *sock);
     void (*close)(ews_sock_t *sock);
 };

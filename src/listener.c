@@ -3,15 +3,23 @@
 #include <netinet/in.h>
 #include <string.h>
 
-#include "listener.h"
-#include "client.h"
 #include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
+#include "client.h"
 #include "ews_port.h"
+#include "listener.h"
 #include "server.h"
 #include "socket.h"
 
 
-static const ews_sock_evt_t listener_sock_evt;
+#if CONFIG_EWS_HTTP_CLIENTS > 0
+static const ews_sock_evt_t listener_http_sock_evt;
+#endif
+
+#if CONFIG_EWS_HTTPS_CLIENTS > 0
+static const ews_sock_evt_t listener_https_sock_evt;
+#endif
 
 bool listener_init(ews_t *ews, ews_listener_t *listener, uint16_t port,
         int backlog, bool tls)
@@ -21,12 +29,6 @@ bool listener_init(ews_t *ews, ews_listener_t *listener, uint16_t port,
     int ret;
 
     sock->flags |= EWS_SOCK_FLAG_INUSE | EWS_SOCK_FLAG_TYPE_LISTEN;
-
-#if CONFIG_EWS_HTTP_CLIENTS > 0
-    if (tls) {
-        listener->sock.flags |= EWS_SOCK_FLAG_TLS;
-    }
-#endif
 
 #if CONFIG_EWS_USE_IPV6
     sock->in6.sin6_family = AF_INET6;
@@ -79,8 +81,20 @@ bool listener_init(ews_t *ews, ews_listener_t *listener, uint16_t port,
         goto fail;
     }
 
+#if CONFIG_EWS_HTTP_CLIENTS > 0
+    if (!tls) {
+        sock->evt = &listener_http_sock_evt;
+    }
+#endif
+
+#if CONFIG_EWS_HTTPS_CLIENTS > 0
+    if (tls) {
+        sock->evt = &listener_https_sock_evt;
+        sock->flags |= EWS_SOCK_FLAG_TLS;
+    }
+#endif
+
     sock->ews = ews;
-    sock->evt = &listener_sock_evt;
     sock->flags |= EWS_SOCK_FLAG_CONNECTED;
 
     return true;
@@ -105,14 +119,14 @@ static bool want_read(ews_sock_t *sock)
     return true;
 }
 
-static void do_read(ews_sock_t *sock)
+#if CONFIG_EWS_HTTP_CLIENTS > 0
+static void do_read_http(ews_sock_t *sock)
 {
     ews_t *ews = sock->ews;
     ews_sock_t *client_sock = NULL;
 
     ews_mutex_lock(&ews->mutex);
 
-#if CONFIG_EWS_HTTP_CLIENTS > 0
     if (!(sock->flags & EWS_SOCK_FLAG_TLS)) {
         ews_client_t *client;
         for (int i = 0; i < countof(ews->http_client); i++) {
@@ -124,21 +138,6 @@ static void do_read(ews_sock_t *sock)
             }
         }
     }
-#endif
-
-#if CONFIG_EWS_HTTPS_CLIENTS > 0
-    if (sock->flags & EWS_SOCK_FLAG_TLS) {
-        ews_client_tls_t *client;
-        for (int i = 0; i < countof(ews->https_client); i++) {
-            client = &ews->https_client[i];
-            if (!(client->sock.flags & EWS_SOCK_FLAG_INUSE)) {
-                memset(client, 0, sizeof(*client));
-                client_sock = &client->sock;
-                break;
-            }
-        }
-    }
-#endif
 
     if (client_sock) {
 #if CONFIG_EWS_USE_IPV6
@@ -154,24 +153,65 @@ static void do_read(ews_sock_t *sock)
         client_sock->ews = ews;
         client_sock->last_active = ews_time_ms();
         client_sock->flags |= EWS_SOCK_FLAG_INUSE | EWS_SOCK_FLAG_TYPE_CLIENT;
-#if CONFIG_EWS_HTTP_CLIENTS > 0
-        if (!(sock->flags & EWS_SOCK_FLAG_TLS)) {
-            client_sock->connect = ews_connect;
-        }
-#endif
-#if CONFIG_EWS_HTTPS_CLIENTS > 0
-        if (sock->flags & EWS_SOCK_FLAG_TLS) {
-            client_sock->flags |= EWS_SOCK_FLAG_TLS;
-            client_sock->connect = ews_connect_tls;
-        }
-#endif
+        client_sock->connect = ews_connect;
     }
 
     ews_mutex_unlock(&ews->mutex);
 }
 
-static const ews_sock_evt_t listener_sock_evt = {
+static const ews_sock_evt_t listener_http_sock_evt = {
     .on_close = on_close,
     .want_read = want_read,
-    .do_read = do_read,
+    .do_read = do_read_http,
 };
+#endif
+
+#if CONFIG_EWS_HTTPS_CLIENTS > 0
+static void do_read_https(ews_sock_t *sock)
+{
+    ews_t *ews = sock->ews;
+    ews_sock_t *client_sock = NULL;
+
+    ews_mutex_lock(&ews->mutex);
+
+    if (sock->flags & EWS_SOCK_FLAG_TLS) {
+        ews_client_tls_t *client;
+        for (int i = 0; i < countof(ews->https_client); i++) {
+            client = &ews->https_client[i];
+            if (!(client->sock.flags & EWS_SOCK_FLAG_INUSE)) {
+                memset(client, 0, sizeof(*client));
+                client_sock = &client->sock;
+                break;
+            }
+        }
+    }
+
+    if (client_sock) {
+#if CONFIG_EWS_USE_IPV6
+        socklen_t socklen = sizeof(struct sockaddr_in6);
+#else
+        socklen_t socklen = sizeof(struct sockaddr_in);
+#endif
+        client_sock->fd = accept(sock->fd, &client_sock->sa, &socklen);
+        if (client_sock->fd < 0) {
+            return;
+        }
+
+        client_sock->ews = ews;
+        client_sock->last_active = ews_time_ms();
+        client_sock->flags |= EWS_SOCK_FLAG_INUSE | EWS_SOCK_FLAG_TYPE_CLIENT;
+        if (sock->flags & EWS_SOCK_FLAG_TLS) {
+            client_sock->flags |= EWS_SOCK_FLAG_TLS;
+            client_sock->connect = ews_connect_tls;
+        }
+    }
+
+    ews_mutex_unlock(&ews->mutex);
+}
+
+static const ews_sock_evt_t listener_https_sock_evt = {
+    .on_close = on_close,
+    .want_read = want_read,
+    .do_read = do_read_https,
+};
+#endif

@@ -228,7 +228,7 @@ static void *thread_wrapper(void *arg)
 /// @param[in] stack_words size of the stack in number of machine words
 /// @return 1 on success, 0 on error
 static inline int ews_thread_init(ews_thread_t *thread, ews_thread_func_t func,
-        void *arg, size_t stack_words)
+        void *arg, int stack_words)
 {
     pthread_attr_t attr;
 
