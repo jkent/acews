@@ -22,16 +22,17 @@ struct ews_http_conn {
     int buflen;
 };
 
-typedef struct ews_http_req ews_http_req_t;
+typedef struct ews_req ews_req_t;
 
 /// http request data
-struct ews_http_req {
+struct ews_req {
     const char *method;
     const char *path;
     const char *headers;
     const char *hdr_name;
 
     const char *x_path;
+    int x_path_len;
     const char *x_query;
 
     int length, consumed;
@@ -40,35 +41,37 @@ struct ews_http_req {
     int boundary_len;
 };
 
-typedef struct ews_http_rsp ews_http_rsp_t;
+typedef struct ews_rsp ews_rsp_t;
 
 /// http response data
-struct ews_http_rsp {
+struct ews_rsp {
     int length, produced;
 };
 
 #define EWS_FLAGS_KEEPALIVE         (1 <<  8)
 #define EWS_FLAGS_RSP_CHUNKED       (1 <<  9)
 #define EWS_FLAGS_RSP_STARTED       (1 << 10)
+#define EWS_FLAGS_WEBSOCKET         (1 << 11)
 
-typedef struct ews_http_sess ews_http_sess_t;
+typedef struct ews_sess ews_sess_t;
 
 /// http session (private view)
-struct ews_http_sess {
-    const ews_route_t *route;
+struct ews_sess {
     ews_state_t state;
-    ews_http_flags_t flags;
+    ews_flags_t flags;
     int state_count;
-    void *user;
-    ews_http_req_t req;
-    ews_http_rsp_t rsp;
+    ews_req_t _req;
+    ews_rsp_t _rsp;
 };
 
 /// http instance (private view)
 struct ews_http {
     const ews_http_ops_t *ops;
-    ews_http_conn_t conn;
-    ews_http_sess_t sess;
+    const ews_route_t *route;
+    ews_sess_t *sess;
+    void *user;
+    ews_http_conn_t _conn;
+    ews_sess_t _sess;
 };
 
 /// http socket event instance

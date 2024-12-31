@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "ews_config.h"
 
@@ -66,9 +67,9 @@ void ews_routes_clear(ews_t *ews)
     ews->route_last = NULL;
 }
 
-ews_status_t ews_route_404_handler(ews_http_t *http, ews_http_sess_t *sess)
+ews_status_t ews_route_404_handler(ews_http_t *http)
 {
-    switch (sess->state) {
+    switch (http->sess->state) {
     case EWS_STATE_REQ:
         return EWS_STATUS_MATCH;
 
@@ -89,13 +90,13 @@ const ews_route_t ews_route_404 = {
     .handler = ews_route_404_handler,
 };
 
-ews_status_t ews_routes_test_handler(ews_http_t *http, ews_http_sess_t *sess)
+ews_status_t ews_routes_test_handler(ews_http_t *http)
 {
     const char *name, *value;
     char buf[1024];
     int ret;
 
-    switch (sess->state) {
+    switch (http->sess->state) {
     case EWS_STATE_REQ:
         while (http->ops->get_hdr(http, &name, &value) > 0) {
             printf("hdr: %s: %s\n", name, value);
@@ -132,4 +133,91 @@ ews_status_t ews_routes_test_handler(ews_http_t *http, ews_http_sess_t *sess)
     }
 
     return EWS_STATUS_NEXT;
+}
+
+typedef struct stdio_get_data stdio_get_data_t;
+struct stdio_get_data {
+    FILE *file;
+    long size;
+};
+
+ews_status_t ews_routes_stdio_get_handler(ews_http_t *http)
+{
+    stdio_get_data_t *data = (stdio_get_data_t *) http->user;
+    const char *name, *value;
+    char buf[1024];
+    struct stat st;
+    int ret, end;
+
+    switch (http->sess->state) {
+    case EWS_STATE_REQ:
+        while (http->ops->get_hdr(http, &name, &value)) {
+            if (strcmp(name, ":method") == 0) {
+                if (strcmp(value, "GET") != 0) {
+                    return EWS_STATUS_NOMATCH;
+                }
+            }
+            if (strcmp(name, ":x-path") == 0) {
+                snprintf(buf, sizeof(buf), "%s%s",
+                        (const char *) http->route->argv[0], value);
+                ret = stat(buf, &st);
+                if (ret < 0 || !S_ISREG(st.st_mode)) {
+                    end = strlen(value);
+                    if (end > 0) {
+                        end--;
+                    }
+                    if (value[end] == '/') {
+                        snprintf(buf, sizeof(buf), "%s%sindex.html",
+                                (const char *) http->route->argv[0],
+                                value);
+                    } else {
+                        snprintf(buf, sizeof(buf), "%s%s/index.html",
+                                (const char *) http->route->argv[0],
+                                value);
+                    }
+                    ret = stat(buf, &st);
+                }
+                if (ret < 0 || !S_ISREG(st.st_mode)) {
+                    return EWS_STATUS_NOMATCH;
+                }
+                data = malloc(sizeof(stdio_get_data_t));
+                if (!data) {
+                    return EWS_STATUS_ERROR;
+                }
+                data->size = st.st_size;
+                data->file = fopen(buf, "rb");
+                if (!data->file) {
+                    free(data);
+                    return EWS_STATUS_ERROR;
+                }
+                http->user = data;
+                return EWS_STATUS_MATCH;
+            }
+        }
+        break;
+
+    case EWS_STATE_RSP:
+        http->ops->start_rsp(http, 200, "OK");
+        http->ops->sendf_hdr(http, "Content-Length", "%d", data->size);
+        break;
+
+    case EWS_STATE_RSP_BDY:
+        ret = fread(buf, 1, sizeof(data), data->file);
+        if (ret > 0) {
+            http->ops->send(http, buf, ret);
+            return EWS_STATUS_MORE;
+        }
+        fclose(data->file);
+        if (ret < 0) {
+            return EWS_STATUS_ERROR;
+        }
+        return EWS_STATUS_DONE;
+
+    case EWS_STATE_FIN:
+        free(data);
+        http->user = NULL;
+        break;
+    }
+
+    return EWS_STATUS_SKIP;
 }

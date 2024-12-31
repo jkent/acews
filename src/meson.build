@@ -6,5 +6,6 @@ sources += files(
     'server.c',
     'socket.c',
     'utils.c',
+    'websocket.c',
     'worker.c',
 )

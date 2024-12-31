@@ -16,6 +16,7 @@ typedef struct ews_client_tls ews_client_tls_t;
 
 struct ews_client {
     ews_sock_t sock;
+    ews_thread_t thread;
 };
 
 #if CONFIG_EWS_HTTPS_CLIENTS > 0

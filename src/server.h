@@ -30,6 +30,9 @@ struct ews {
 #if CONFIG_EWS_HTTP_CLIENTS > 0 || defined(__DOXYGEN__)
     ews_listener_t http_listener;
     ews_client_t http_client[CONFIG_EWS_HTTP_CLIENTS];
+# if CONFIG_EWS_WS_CLIENTS > 0 || defined(__DOXYGEN__)
+    ews_client_t ws_client[CONFIG_EWS_WS_CLIENTS];
+# endif
 #endif
 
 #if CONFIG_EWS_HTTPS_CLIENTS > 0 || defined(__DOXYGEN__)
@@ -43,6 +46,9 @@ struct ews {
 
     ews_listener_t https_listener;
     ews_client_tls_t https_client[CONFIG_EWS_HTTPS_CLIENTS];
+# if CONFIG_EWS_WSS_CLIENTS > 0 || defined(__DOXYGEN__)
+    ews_client_tls_t wss_client[CONFIG_EWS_WSS_CLIENTS];
+# endif
 #endif
 
     ews_route_t *route_first;

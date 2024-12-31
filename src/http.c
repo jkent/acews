@@ -13,37 +13,38 @@
 #include "server.h"
 #include "socket.h"
 #include "utils.h"
+#include "websocket.h"
 
 
 static int fill_buf(ews_http_t *http)
 {
-    ews_sock_t *sock = http->conn.sock;
+    ews_sock_t *sock = http->_conn.sock;
     int ret;
 
     // left-align buffer
-    memmove(http->conn.buf, &http->conn.buf[http->conn.bufpos],
-            http->conn.buflen);
-    http->conn.bufpos = 0;
+    memmove(http->_conn.buf, &http->_conn.buf[http->_conn.bufpos],
+            http->_conn.buflen);
+    http->_conn.bufpos = 0;
 
     // recv data into the buffer
-    ret = sock->ops->recv(sock, &http->conn.buf[http->conn.buflen],
-            sizeof(http->conn.buf) - http->conn.buflen);
+    ret = sock->ops->recv(sock, &http->_conn.buf[http->_conn.buflen],
+            sizeof(http->_conn.buf) - http->_conn.buflen);
     if (ret <= 0) {
         return ret;
     }
-    http->conn.buflen += ret;
+    http->_conn.buflen += ret;
     return 1;
 }
 
 static int parse_req(ews_http_t *http)
 {
-    char *pi = &http->conn.buf[http->conn.bufpos];
-    char *po = &http->conn.buf[http->conn.bufpos];
+    char *pi = &http->_conn.buf[http->_conn.bufpos];
+    char *po = &http->_conn.buf[http->_conn.bufpos];
     char *p, *ver, *name, *value;
     bool have_ver = false;
     int len;
 
-    http->sess.req.method = po;
+    http->_sess._req.method = po;
     while (isblank(*pi)) {
         pi++;
     }
@@ -61,7 +62,7 @@ static int parse_req(ews_http_t *http)
     }
     *po++ = '\0';
 
-    http->sess.req.path = po;
+    http->_sess._req.path = po;
     while (*pi && !isspace(*pi)) {
         *po++ = *pi++;
     }
@@ -96,11 +97,11 @@ static int parse_req(ews_http_t *http)
         *po++ = '\0';
 
         if (strcmp(ver, "HTTP/1.1") == 0) {
-            http->sess.flags |= EWS_FLAGS_HTTP11 | EWS_FLAGS_KEEPALIVE;
+            http->_sess.flags |= EWS_FLAGS_HTTP11 | EWS_FLAGS_KEEPALIVE;
         }
     }
 
-    http->sess.req.headers = po;
+    http->_sess._req.headers = po;
     while (*pi != '\r' && *(pi + 1) != '\n') {
         name = po;
         if (*pi == ':') {
@@ -132,12 +133,12 @@ static int parse_req(ews_http_t *http)
 
         if (strcmp(name, "connection") == 0) {
             if (strstr(value, "close")) {
-                http->sess.flags &= ~EWS_FLAGS_KEEPALIVE;
+                http->_sess.flags &= ~EWS_FLAGS_KEEPALIVE;
             } else if (strstr(value, "keep-alive")) {
-                http->sess.flags |= EWS_FLAGS_KEEPALIVE;
+                http->_sess.flags |= EWS_FLAGS_KEEPALIVE;
             }
         } else if (strcmp(name, "content-length") == 0) {
-            http->sess.req.length = strtol(value, NULL, 10);
+            http->_sess._req.length = strtol(value, NULL, 10);
         } else if (strcmp(name, "content-type") == 0) {
             if ((p = strstr(value, "multipart/form-data;")) == NULL) {
                 goto no_multipart;
@@ -159,12 +160,12 @@ static int parse_req(ews_http_t *http)
                     len++;
                 }
             }
-            http->sess.req.boundary = malloc(len + 5);
-            if (http->sess.req.boundary == NULL) {
+            http->_sess._req.boundary = malloc(len + 5);
+            if (http->_sess._req.boundary == NULL) {
                 return -1;
             }
-            http->sess.req.boundary_len = len + 4;
-            sprintf((char *) http->sess.req.boundary, "\r\n--%.*s", len, p);
+            http->_sess._req.boundary_len = len + 4;
+            sprintf((char *) http->_sess._req.boundary, "\r\n--%.*s", len, p);
 no_multipart:
         }
     }
@@ -176,10 +177,10 @@ no_multipart:
 
 static int parse_mp(ews_http_t *http)
 {
-    char *pi = &http->conn.buf[http->conn.bufpos];
-    char *po = &http->conn.buf[http->conn.bufpos];
+    char *pi = &http->_conn.buf[http->_conn.bufpos];
+    char *po = &http->_conn.buf[http->_conn.bufpos];
 
-    http->sess.req.headers = po;
+    http->_sess._req.headers = po;
     while (*pi != '\r' && *(pi + 1) != '\n') {
         if (*pi == ':') {
             return -1;
@@ -226,31 +227,31 @@ static int http_ops_get_hdr(ews_http_t *http, const char **name,
         ":x-query",
     };
 
-    p = http->sess.req.hdr_name;
+    p = http->_sess._req.hdr_name;
     if (p == NULL) {
         p = names[0];
     }
     *name = p;
 
     if (*name == names[0]) {
-        *value = http->sess.req.method;
-        http->sess.req.hdr_name = names[1];
+        *value = http->_sess._req.method;
+        http->_sess._req.hdr_name = names[1];
         return 1;
     } else if (*name == names[1]) {
-        *value = http->sess.req.path;
-        http->sess.req.hdr_name = names[2];
+        *value = http->_sess._req.path;
+        http->_sess._req.hdr_name = names[2];
         return 1;
     } else if (*name == names[2]) {
-        *value = http->conn.sock->flags & EWS_SOCK_FLAG_TLS ? "https" : "http";
-        http->sess.req.hdr_name = names[3];
+        *value = http->_conn.sock->flags & EWS_SOCK_FLAG_TLS ? "https" : "http";
+        http->_sess._req.hdr_name = names[3];
         return 1;
     } else if (*name == names[3]) {
-        *value = http->sess.req.x_path;
-        http->sess.req.hdr_name = names[4];
+        *value = http->_sess._req.x_path;
+        http->_sess._req.hdr_name = names[4];
         return 1;
     } else if (*name == names[4]) {
-        *value = http->sess.req.x_query;
-        http->sess.req.hdr_name = http->sess.req.headers;
+        *value = http->_sess._req.x_query;
+        http->_sess._req.hdr_name = http->_sess._req.headers;
         return 1;
     } else if (!**name) {
         return -1;
@@ -262,7 +263,7 @@ static int http_ops_get_hdr(ews_http_t *http, const char **name,
     while (*p++)
         ;
 
-    http->sess.req.hdr_name = p;
+    http->_sess._req.hdr_name = p;
     return 1;
 }
 
@@ -270,26 +271,26 @@ static int http_ops_recv(ews_http_t *http, char *buf, int buf_sz)
 {
     int len, pos;
 
-    if (http->sess.state != EWS_STATE_REQ_BDY &&
-            http->sess.state != EWS_STATE_REQ_MP_BDY) {
+    if (http->_sess.state != EWS_STATE_REQ_BDY &&
+            http->_sess.state != EWS_STATE_REQ_MP_BDY) {
         return -1;
     }
 
     // if request length specified, limit what we can copy out
-    if (http->sess.req.length >= 0) {
-        buf_sz = MIN(buf_sz, http->sess.req.length - http->sess.req.consumed);
+    if (http->_sess._req.length >= 0) {
+        buf_sz = MIN(buf_sz, http->_sess._req.length - http->_sess._req.consumed);
     }
 
     // limit to buflen
-    len = MIN(buf_sz, http->conn.buflen);
+    len = MIN(buf_sz, http->_conn.buflen);
     if (len < 0) {
-        len = http->conn.buflen;
+        len = http->_conn.buflen;
     }
 
-    if (http->sess.req.boundary) {
-        if (http->sess.state == EWS_STATE_REQ_BDY) {
-            pos = findp(&http->conn.buf[http->conn.bufpos], len,
-                    http->sess.req.boundary + 2);
+    if (http->_sess._req.boundary) {
+        if (http->_sess.state == EWS_STATE_REQ_BDY) {
+            pos = findp(&http->_conn.buf[http->_conn.bufpos], len,
+                    http->_sess._req.boundary + 2);
             if (pos > 0) {
                 len = pos;
             }
@@ -297,24 +298,24 @@ static int http_ops_recv(ews_http_t *http, char *buf, int buf_sz)
                 goto data;
             }
             // look for initial boundary
-            if (http->conn.buflen >= http->sess.req.boundary_len) {
-                if (memcmp(&http->conn.buf[http->conn.bufpos +
-                        http->sess.req.boundary_len - 2], "\r\n", 2) == 0) {
-                    http->sess.state = EWS_STATE_REQ_MP;
-                    http->sess.state_count = -1;
-                    http->conn.bufpos += http->sess.req.boundary_len;
-                    http->conn.buflen -= http->sess.req.boundary_len;
-                    http->sess.req.consumed += http->sess.req.boundary_len;
+            if (http->_conn.buflen >= http->_sess._req.boundary_len) {
+                if (memcmp(&http->_conn.buf[http->_conn.bufpos +
+                        http->_sess._req.boundary_len - 2], "\r\n", 2) == 0) {
+                    http->_sess.state = EWS_STATE_REQ_MP;
+                    http->_sess.state_count = -1;
+                    http->_conn.bufpos += http->_sess._req.boundary_len;
+                    http->_conn.buflen -= http->_sess._req.boundary_len;
+                    http->_sess._req.consumed += http->_sess._req.boundary_len;
                     return 0;
                 }
-                len = http->sess.req.boundary_len;
+                len = http->_sess._req.boundary_len;
                 goto data;
             }
             return 0;
         }
 
-        pos = findp(&http->conn.buf[http->conn.bufpos], len,
-                http->sess.req.boundary);
+        pos = findp(&http->_conn.buf[http->_conn.bufpos], len,
+                http->_sess._req.boundary);
         if (pos > 0) {
             len = pos;
         }
@@ -322,29 +323,29 @@ static int http_ops_recv(ews_http_t *http, char *buf, int buf_sz)
             goto data;
         }
         // look for terminating boundary
-        if (http->conn.buflen >= http->sess.req.boundary_len + 4) {
-            if (memcmp(&http->conn.buf[http->conn.bufpos +
-                    http->sess.req.boundary_len], "--\r\n", 4) == 0) {
-                http->sess.state = EWS_STATE_REQ_BDY;
-                http->sess.state_count = -1;
-                http->conn.bufpos += http->sess.req.boundary_len + 4;
-                http->conn.buflen -= http->sess.req.boundary_len + 4;
-                http->sess.req.consumed += http->sess.req.boundary_len + 4;
+        if (http->_conn.buflen >= http->_sess._req.boundary_len + 4) {
+            if (memcmp(&http->_conn.buf[http->_conn.bufpos +
+                    http->_sess._req.boundary_len], "--\r\n", 4) == 0) {
+                http->_sess.state = EWS_STATE_REQ_BDY;
+                http->_sess.state_count = -1;
+                http->_conn.bufpos += http->_sess._req.boundary_len + 4;
+                http->_conn.buflen -= http->_sess._req.boundary_len + 4;
+                http->_sess._req.consumed += http->_sess._req.boundary_len + 4;
                 return 0;
             }
         }
         // look for middle boundary
-        if (http->conn.buflen >= http->sess.req.boundary_len + 2) {
-            if (memcmp(&http->conn.buf[http->conn.bufpos +
-                    http->sess.req.boundary_len], "\r\n", 2) == 0) {
-                http->sess.state = EWS_STATE_REQ_MP;
-                http->sess.state_count = -1;
-                http->conn.bufpos += http->sess.req.boundary_len + 2;
-                http->conn.buflen -= http->sess.req.boundary_len + 2;
-                http->sess.req.consumed += http->sess.req.boundary_len + 2;
+        if (http->_conn.buflen >= http->_sess._req.boundary_len + 2) {
+            if (memcmp(&http->_conn.buf[http->_conn.bufpos +
+                    http->_sess._req.boundary_len], "\r\n", 2) == 0) {
+                http->_sess.state = EWS_STATE_REQ_MP;
+                http->_sess.state_count = -1;
+                http->_conn.bufpos += http->_sess._req.boundary_len + 2;
+                http->_conn.buflen -= http->_sess._req.boundary_len + 2;
+                http->_sess._req.consumed += http->_sess._req.boundary_len + 2;
                 return 0;
             }
-            len = http->sess.req.boundary_len + 2;
+            len = http->_sess._req.boundary_len + 2;
             goto data;
         }
         return 0;
@@ -354,33 +355,33 @@ data:
 
     // copy out what we can from the buffer
     if (buf) {
-        memcpy(buf, &http->conn.buf[http->conn.bufpos], len);
+        memcpy(buf, &http->_conn.buf[http->_conn.bufpos], len);
     }
-    http->conn.bufpos += len;
-    http->conn.buflen -= len;
-    http->sess.req.consumed += len;
+    http->_conn.bufpos += len;
+    http->_conn.buflen -= len;
+    http->_sess._req.consumed += len;
     return len;
 }
 
 static int http_ops_start_rsp(ews_http_t *http, int code, const char *status)
 {
-    ews_sock_t *sock = http->conn.sock;
+    ews_sock_t *sock = http->_conn.sock;
     int ret;
 
-    if (http->sess.flags & EWS_FLAGS_RSP_STARTED) {
+    if (http->_sess.flags & EWS_FLAGS_RSP_STARTED) {
         return -1;
     }
 
-    http->sess.rsp.length = -1;
+    http->_sess._rsp.length = -1;
 
     ret = sock->ops->sendf(sock, "%s %03d %s\r\n",
-            http->sess.flags & EWS_FLAGS_HTTP11 ? "HTTP/1.1" : "HTTP/1.0",
+            http->_sess.flags & EWS_FLAGS_HTTP11 ? "HTTP/1.1" : "HTTP/1.0",
             code, status);
     if (ret <= 0) {
         return ret;
     }
 
-    http->sess.flags |= EWS_FLAGS_RSP_STARTED;
+    http->_sess.flags |= EWS_FLAGS_RSP_STARTED;
 
     return ret;
 }
@@ -388,23 +389,27 @@ static int http_ops_start_rsp(ews_http_t *http, int code, const char *status)
 static int http_ops_send_hdr(ews_http_t *http, const char *name,
         const char *value)
 {
-    ews_sock_t *sock = http->conn.sock;
+    ews_sock_t *sock = http->_conn.sock;
 
-    if (!(http->sess.flags & EWS_FLAGS_RSP_STARTED)) {
+    if (!(http->_sess.flags & EWS_FLAGS_RSP_STARTED)) {
         return -1;
     }
 
     if (strcasecmp(name, "Connection") == 0) {
         if (strstr(value, "close")) {
-            http->sess.flags &= ~EWS_FLAGS_KEEPALIVE;
+            http->_sess.flags &= ~EWS_FLAGS_KEEPALIVE;
         } else if (strstr(value, "keep-alive")) {
-            http->sess.flags |= EWS_FLAGS_KEEPALIVE;
+            http->_sess.flags |= EWS_FLAGS_KEEPALIVE;
         }
     } else if (strcasecmp(name, "Content-Length") == 0) {
-        http->sess.rsp.length = strtol(value, NULL, 10);
+        http->_sess._rsp.length = strtol(value, NULL, 10);
     } else if (strcasecmp(name, "Transfer-Encoding") == 0) {
         if (strstr(value, "chunked")) {
-            http->sess.flags |= EWS_FLAGS_RSP_CHUNKED;
+            http->_sess.flags |= EWS_FLAGS_RSP_CHUNKED;
+        }
+    } else if (strcasecmp(name, "Upgrade") == 0) {
+        if (strstr(value, "websocket")) {
+            http->_sess.flags |= EWS_FLAGS_WEBSOCKET;
         }
     }
 
@@ -440,17 +445,17 @@ static int http_ops_sendf_hdr(ews_http_t *http, const char *name,
 
 static int http_ops_send(ews_http_t *http, const char *buf, int buf_sz)
 {
-    ews_sock_t *sock = http->conn.sock;
+    ews_sock_t *sock = http->_conn.sock;
 
     if (buf_sz < 0) {
         buf_sz = strlen(buf);
     }
 
-    if (http->sess.rsp.length >= 0) {
-        buf_sz = MIN(buf_sz, http->sess.rsp.length - http->sess.rsp.produced);
+    if (http->_sess._rsp.length >= 0) {
+        buf_sz = MIN(buf_sz, http->_sess._rsp.length - http->_sess._rsp.produced);
     }
 
-    if (http->sess.flags & EWS_FLAGS_RSP_CHUNKED) {
+    if (http->_sess.flags & EWS_FLAGS_RSP_CHUNKED) {
         if (sock->ops->sendf(sock, "%x\r\n", buf_sz) < 0) {
             return -1;
         }
@@ -460,16 +465,16 @@ static int http_ops_send(ews_http_t *http, const char *buf, int buf_sz)
         return -1;
     }
 
-    if (http->sess.flags & EWS_FLAGS_RSP_CHUNKED) {
+    if (http->_sess.flags & EWS_FLAGS_RSP_CHUNKED) {
         if (sock->ops->send(sock, "\r\n", 2) < 0) {
             return -1;
         }
     }
 
-    http->sess.rsp.produced += buf_sz;
-    if (http->sess.rsp.produced == http->sess.rsp.length) {
-        http->sess.state = EWS_STATE_FIN;
-        http->sess.state_count = -1;
+    http->_sess._rsp.produced += buf_sz;
+    if (http->_sess._rsp.produced == http->_sess._rsp.length) {
+        http->_sess.state = EWS_STATE_FIN;
+        http->_sess.state_count = -1;
     }
 
     return buf_sz;
@@ -511,17 +516,17 @@ static const ews_http_ops_t http_ops = {
 
 static int start_req(ews_http_t *http)
 {
-    int pos, ret, len;
+    int pos, ret;
 
-    http->sess.req.length = -1;
+    http->_sess._req.length = -1;
 
     // check if request is too long
-    if (http->conn.buflen > sizeof(http->conn.buf) - 4) {
+    if (http->_conn.buflen > sizeof(http->_conn.buf) - 4) {
         return -2;
     }
 
     // look for termination
-    pos = find(http->conn.buf, http->conn.buflen, "\r\n\r\n");
+    pos = find(http->_conn.buf, http->_conn.buflen, "\r\n\r\n");
     // not found? try again later
     if (pos < 0) {
         return 0;
@@ -532,21 +537,21 @@ static int start_req(ews_http_t *http)
         return ret;
     }
 
-    http->conn.bufpos += pos + 4;
-    http->conn.buflen -= pos + 4;
-    http->sess.req.hdr_name = http->sess.req.method;
+    http->_conn.bufpos += pos + 4;
+    http->_conn.buflen -= pos + 4;
+    http->_sess._req.hdr_name = http->_sess._req.method;
 
-    len = strlen(http->sess.req.path);
-    http->sess.req.x_path = malloc(len + 1);
-    if (!http->sess.req.x_path) {
+    http->_sess._req.x_path_len = strlen(http->_sess._req.path) + 1;
+    http->_sess._req.x_path = malloc(http->_sess._req.x_path_len);
+    if (!http->_sess._req.x_path) {
         return -1;
     }
 
-    parse_uri(http->sess.req.path, (char *) http->sess.req.x_path,
-            &http->sess.req.x_query);
+    parse_uri(http->_sess._req.path, (char *) http->_sess._req.x_path,
+            &http->_sess._req.x_query);
 
-    LOGI("#%d %s %s", http->conn.sock->fd, http->sess.req.method,
-            http->sess.req.x_path);
+    LOGI("#%d %s %s", http->_conn.sock->fd, http->_sess._req.method,
+            http->_sess._req.x_path);
 
     return 1;
 }
@@ -556,12 +561,12 @@ static int fetch_mp(ews_http_t *http)
     int pos, ret;
 
     // check if headers are too long
-    if (http->conn.buflen > sizeof(http->conn.buf) - 4) {
+    if (http->_conn.buflen > sizeof(http->_conn.buf) - 4) {
         return -2;
     }
 
     // look for termination
-    pos = find(&http->conn.buf[http->conn.bufpos], http->conn.buflen,
+    pos = find(&http->_conn.buf[http->_conn.bufpos], http->_conn.buflen,
             "\r\n\r\n");
     // not found? try again later
     if (pos < 0) {
@@ -573,54 +578,53 @@ static int fetch_mp(ews_http_t *http)
         return ret;
     }
 
-    http->conn.bufpos += pos + 4;
-    http->conn.buflen -= pos + 4;
-    http->sess.req.consumed += pos + 4;
-    http->sess.req.hdr_name = http->sess.req.headers;
+    http->_conn.bufpos += pos + 4;
+    http->_conn.buflen -= pos + 4;
+    http->_sess._req.consumed += pos + 4;
+    http->_sess._req.hdr_name = http->_sess._req.headers;
     return 1;
 }
 
 static ews_status_t find_route(ews_http_t *http)
 {
-    ews_t *ews = http->conn.sock->ews;
-    const ews_route_t *route = ews->route_first;
+    ews_t *ews = http->_conn.sock->ews;
     ews_status_t status;
 
-    while (route) {
-        if (!fnmatch(route->pattern, http->sess.req.x_path)) {
-            route = route->next;
+    http->route = ews->route_first;
+
+    while (http->route) {
+        if (!fnmatch(http->route->pattern, http->_sess._req.x_path)) {
+            http->route = http->route->next;
             continue;
         }
 
-        http->sess.req.hdr_name = NULL;
-
-        status = route->handler(http, &http->sess);
+        http->_sess._req.hdr_name = NULL;
+        status = http->route->handler(http);
         if (status == EWS_STATUS_MATCH) {
-            LOGD("#%d found!", http->conn.sock->fd);
+            LOGD("#%d found!", http->_conn.sock->fd);
             break;
         }
         if (status != EWS_STATUS_NOMATCH) {
             status = EWS_STATUS_ERROR;
             break;
         }
-        route = route->next;
+        http->route = http->route->next;
     }
 
-    if (route == NULL) {
-        route = &ews_route_404;
-        status = route->handler(http, &http->sess);
-        LOGD("#%d 404", http->conn.sock->fd);
+    if (status != EWS_STATUS_ERROR && status != EWS_STATUS_MATCH) {
+        http->route = &ews_route_404;
+        http->_sess._req.hdr_name = NULL;
+        status = http->route->handler(http);
+        LOGD("#%d 404", http->_conn.sock->fd);
     }
-
-    http->sess.route = route;
 
     if (status == EWS_STATUS_MATCH) {
-        if (http->sess.req.length >= 0 || http->sess.req.boundary) {
-            http->sess.state = EWS_STATE_REQ_BDY;
+        if (http->_sess._req.length >= 0 || http->_sess._req.boundary) {
+            http->_sess.state = EWS_STATE_REQ_BDY;
         } else {
-            http->sess.state = EWS_STATE_RSP;
+            http->_sess.state = EWS_STATE_RSP;
         }
-        http->sess.state_count = -1;
+        http->_sess.state_count = -1;
     }
 
     return status;
@@ -628,40 +632,54 @@ static ews_status_t find_route(ews_http_t *http)
 
 static void finalize(ews_http_t *http)
 {
-    ews_sock_t *sock = http->conn.sock;
+    ews_sock_t *sock = http->_conn.sock;
+    ews_flags_t flags = http->_sess.flags;
 
-    if (!http->sess.route) {
+    if (!http->route) {
         return;
     }
 
-    if (http->sess.state == EWS_STATE_FIN) {
-        // send final chunk if chunked encoding
-        http->ops->send(http, "", 0);
+    if (!(flags & EWS_FLAGS_WEBSOCKET)) {
+        if (http->_sess.state == EWS_STATE_FIN) {
+            // send final chunk if chunked encoding
+            http->ops->send(http, "", 0);
+        }
+
+        if (!(flags & EWS_FLAGS_KEEPALIVE) || !(flags & EWS_FLAGS_RSP_CHUNKED ||
+                http->_sess._rsp.length >= 0)) {
+            // shutdown the connection
+            sock->ops->shutdown(sock);
+        }
     }
 
-    if (!(http->sess.flags & EWS_FLAGS_KEEPALIVE)) {
-        // shutdown the connection
-        sock->ops->shutdown(sock);
+    // free and zero session data
+    if (http->_sess._req.x_path) {
+        memset((void *) http->_sess._req.x_path, 0, http->_sess._req.x_path_len);
+        free((void *) http->_sess._req.x_path);
     }
-
-    // free session data
-    if (http->sess.req.x_path) {
-        free((void *) http->sess.req.x_path);
-    }
-    if (http->sess.req.boundary) {
-        free((void *) http->sess.req.boundary);
+    if (http->_sess._req.boundary) {
+        memset((void *) http->_sess._req.boundary, 0,
+                http->_sess._req.boundary_len);
+        free((void *) http->_sess._req.boundary);
     }
 
     // zero session data
-    memset(&http->sess, 0, sizeof(http->sess));
+    memset(&http->_sess, 0, sizeof(http->_sess));
+
+    if (http->_sess.flags & EWS_FLAGS_WEBSOCKET) {
+        ws_upgrade(http, sock);
+
+        // free session data
+        free(http);
+    }
 }
 
 static void handle_error(ews_http_t *http, int code)
 {
-    ews_sock_t *sock = http->conn.sock;
+    ews_sock_t *sock = http->_conn.sock;
 
-    http->sess.flags &= ~EWS_FLAGS_KEEPALIVE;
-    if (http->sess.state < EWS_STATE_RSP) {
+    http->_sess.flags &= ~EWS_FLAGS_KEEPALIVE;
+    if (http->_sess.state < EWS_STATE_RSP) {
         if (code == 431) {
             http->ops->start_rsp(http, code, "Request Header Fields Too Large");
             http->ops->send_hdr(http, "Content-Length", "40");
@@ -674,10 +692,11 @@ static void handle_error(ews_http_t *http, int code)
         }
     }
 
-    if (http->sess.route && http->sess.state != EWS_STATE_FIN) {
-        http->sess.state = EWS_STATE_FIN;
-        http->sess.state_count = 0;
-        http->sess.route->handler(http, &http->sess);
+    if (http->_sess.state != EWS_STATE_REQ &&
+            http->_sess.state != EWS_STATE_FIN) {
+        http->_sess.state = EWS_STATE_FIN;
+        http->_sess.state_count = 0;
+        http->route->handler(http);
     }
 
     finalize(http);
@@ -685,10 +704,10 @@ static void handle_error(ews_http_t *http, int code)
 
 static void handle_status(ews_http_t *http, ews_status_t status)
 {
-    ews_sock_t *sock = http->conn.sock;
+    ews_sock_t *sock = http->_conn.sock;
 
-    http->sess.state_count++;
-    if (http->sess.state_count == 0) {
+    http->_sess.state_count++;
+    if (http->_sess.state_count == 0) {
         return;
     }
 
@@ -700,48 +719,64 @@ again:
         break;
 
     case EWS_STATUS_CLOSE:
-        if (http->sess.route && http->sess.state != EWS_STATE_FIN) {
-            http->sess.state = EWS_STATE_FIN;
-            http->sess.state_count = 0;
-            http->sess.route->handler(http, &http->sess);
+        if (http->_sess.state != EWS_STATE_REQ &&
+                http->_sess.state != EWS_STATE_FIN) {
+            http->_sess.state = EWS_STATE_FIN;
+            http->_sess.state_count = 0;
+            http->route->handler(http);
         }
         finalize(http);
         break;
 
     case EWS_STATUS_MATCH:
     case EWS_STATUS_NOMATCH:
-        if (http->sess.state != EWS_STATE_REQ) {
+        if (http->_sess.state != EWS_STATE_REQ) {
             status = EWS_STATUS_ERROR;
             goto again;
         }
         break;
 
     case EWS_STATUS_MORE:
-        if (http->sess.state == EWS_STATE_FIN) {
+        if (http->_sess.state == EWS_STATE_FIN) {
             status = EWS_STATUS_ERROR;
             goto again;
         }
         break;
 
     case EWS_STATUS_SKIP:
-        switch (http->sess.state) {
+        switch (http->_sess.state) {
         case EWS_STATE_REQ_BDY:
             http->ops->recv(http, NULL, -1);
-            if (http->sess.req.consumed == http->sess.req.length) {
-                http->sess.state = EWS_STATE_RSP;
-                http->sess.state_count = 0;
+            if (http->_sess._req.consumed == http->_sess._req.length) {
+                http->_sess.state = EWS_STATE_RSP;
+                http->_sess.state_count = 0;
             }
             break;
 
         case EWS_STATE_REQ_MP:
-            http->sess.state = EWS_STATE_REQ_MP_BDY;
-            http->sess.state_count = 0;
+            http->_sess.state = EWS_STATE_REQ_MP_BDY;
+            http->_sess.state_count = 0;
             break;
 
         case EWS_STATE_REQ_MP_BDY:
             http->ops->recv(http, NULL, -1);
             break;
 
+        case EWS_STATE_RSP:
+            if (!(http->_sess.flags & EWS_FLAGS_RSP_STARTED)) {
+                status = EWS_STATUS_ERROR;
+                goto again;
+            }
+            sock->ops->send(sock, "\r\n", 2);
+            http->_sess.state = EWS_STATE_RSP_BDY;
+            http->_sess.state_count = 0;
+            break;
+
+        case EWS_STATE_RSP_BDY:
+            http->_sess.state = EWS_STATE_FIN;
+            http->_sess.state_count = 0;
+            break;
+
         case EWS_STATE_FIN:
             finalize(http);
             break;
@@ -751,35 +786,39 @@ again:
             goto again;
         }
 
-        if (http->sess.state_count == -1) {
-            http->sess.state_count = 0;
+        if (http->_sess.state_count == -1) {
+            http->_sess.state_count = 0;
             goto again;
         }
         break;
 
     case EWS_STATUS_NEXT:
-        switch (http->sess.state) {
+        switch (http->_sess.state) {
         case EWS_STATE_REQ_BDY:
-            if (http->sess.req.consumed == http->sess.req.length) {
-                http->sess.state = EWS_STATE_RSP;
-                http->sess.state_count = 0;
+            if (http->_sess._req.consumed == http->_sess._req.length) {
+                http->_sess.state = EWS_STATE_RSP;
+                http->_sess.state_count = 0;
             }
             break;
 
         case EWS_STATE_REQ_MP:
-            http->sess.state = EWS_STATE_REQ_MP_BDY;
-            http->sess.state_count = 0;
+            http->_sess.state = EWS_STATE_REQ_MP_BDY;
+            http->_sess.state_count = 0;
             break;
 
         case EWS_STATE_RSP:
+            if (!(http->_sess.flags & EWS_FLAGS_RSP_STARTED)) {
+                status = EWS_STATUS_ERROR;
+                goto again;
+            }
             sock->ops->send(sock, "\r\n", 2);
-            http->sess.state = EWS_STATE_RSP_BDY;
-            http->sess.state_count = 0;
+            http->_sess.state = EWS_STATE_RSP_BDY;
+            http->_sess.state_count = 0;
             break;
 
         case EWS_STATE_RSP_BDY:
-            http->sess.state = EWS_STATE_FIN;
-            http->sess.state_count = 0;
+            http->_sess.state = EWS_STATE_FIN;
+            http->_sess.state_count = 0;
             break;
 
         case EWS_STATE_FIN:
@@ -787,21 +826,22 @@ again:
             break;
 
         default:
-            break;
+            status = EWS_STATUS_ERROR;
+            goto again;
         }
         break;
 
     case EWS_STATUS_DONE:
-        if (http->sess.state < EWS_STATE_RSP) {
+        if (!(http->_sess.flags & EWS_FLAGS_RSP_STARTED)) {
             status = EWS_STATUS_ERROR;
             goto again;
         }
-        if (http->sess.state < EWS_STATE_RSP) {
-            http->sess.flags &= ~EWS_FLAGS_KEEPALIVE;
+        if (http->_sess.state == EWS_STATE_RSP) {
+            sock->ops->send(sock, "\r\n", 2);
         }
-        if (http->sess.state != EWS_STATE_FIN) {
-            http->sess.state = EWS_STATE_FIN;
-            http->sess.route->handler(http, &http->sess);
+        if (http->_sess.state != EWS_STATE_FIN) {
+            http->_sess.state = EWS_STATE_FIN;
+            http->route->handler(http);
         }
         finalize(http);
         break;
@@ -816,7 +856,8 @@ static void on_connect(ews_sock_t *sock)
 {
     ews_http_t *http = calloc(1, sizeof(*http));
     sock->user = http;
-    http->conn.sock = sock;
+    http->_conn.sock = sock;
+    http->sess = &http->_sess;
     http->ops = &http_ops;
 
     sock->flags |= EWS_SOCK_FLAG_PROTO_HTTP | EWS_SOCK_FLAG_CONNECTED;
@@ -836,14 +877,14 @@ static bool want_read(ews_sock_t *sock)
 {
     ews_http_t *http = sock->user;
 
-    return !(http->sess.state & EWS_STATE_RSP);
+    return !(http->_sess.state & EWS_STATE_RSP);
 }
 
 static bool want_write(ews_sock_t *sock)
 {
     ews_http_t *http = sock->user;
 
-    return !!(http->sess.state & EWS_STATE_RSP);
+    return !!(http->_sess.state & EWS_STATE_RSP);
 }
 
 static void do_read(ews_sock_t *sock)
@@ -860,10 +901,10 @@ static void do_read(ews_sock_t *sock)
         return;
     }
 
-    while (http->sess.state < EWS_STATE_RSP) {
-        len = http->conn.buflen;
+    while (http->_sess.state < EWS_STATE_RSP) {
+        len = http->_conn.buflen;
 
-        switch (http->sess.state) {
+        switch (http->_sess.state) {
         case EWS_STATE_REQ:
             ret = start_req(http);
             if (ret < 0) {
@@ -887,7 +928,7 @@ static void do_read(ews_sock_t *sock)
             if (ret <= 0) {
                 return;
             }
-            status = http->sess.route->handler(http, &http->sess);
+            status = http->route->handler(http);
             handle_status(http, status);
             if (status <= EWS_STATUS_CLOSE) {
                 return;
@@ -896,12 +937,12 @@ static void do_read(ews_sock_t *sock)
 
         case EWS_STATE_REQ_BDY:
         case EWS_STATE_REQ_MP_BDY:
-            status = http->sess.route->handler(http, &http->sess);
+            status = http->route->handler(http);
             handle_status(http, status);
             break;
         }
 
-        if (len == http->conn.buflen) {
+        if (len == http->_conn.buflen) {
             break;
         }
     }
@@ -912,7 +953,7 @@ static void do_write(ews_sock_t *sock)
     ews_http_t *http = sock->user;
     ews_status_t status;
 
-    status = http->sess.route->handler(http, &http->sess);
+    status = http->route->handler(http);
     handle_status(http, status);
 }
 

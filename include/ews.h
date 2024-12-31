@@ -29,22 +29,31 @@ typedef struct ews_http ews_http_t;
 typedef struct ews_http_ops ews_http_ops_t;
 
 /// http session type
-typedef struct ews_http_sess ews_http_sess_t;
+typedef struct ews_sess ews_sess_t;
 
 /// http route type
 typedef struct ews_route ews_route_t;
 
-/// session state type
+/// http state type
 typedef uint8_t ews_state_t;
 
-/// session flags type
-typedef uint16_t ews_http_flags_t;
+/// http flags type
+typedef uint16_t ews_flags_t;
 
 /// route status type
 typedef int8_t ews_status_t;
 
 /// route handler type
-typedef ews_status_t (*ews_handler_t)(ews_http_t *http, ews_http_sess_t *sess);
+typedef ews_status_t (*ews_handler_t)(ews_http_t *http);
+
+/// websocket session type
+typedef struct ews_ws ews_ws_t;
+
+/// websocket ops type
+typedef struct ews_ws_ops ews_ws_ops_t;
+
+/// websocket loop type
+typedef void (*ews_ws_loop_t)(ews_ws_t *ws);
 
 /// @}
 ////////////////////////////////////////////////////////////////////////////////
@@ -112,11 +121,13 @@ bool ews_add_client_cert(ews_t *ews, const uint8_t *crt, int crt_len);
 #define EWS_STATE_RSP_BDY       0x09
 #define EWS_STATE_FIN           0xFF
 
+/// session flags
 #define EWS_FLAGS_HTTP11        (1 <<  0)
 
 /// http ops struct
 struct ews_http_ops {
-    /// get header, starting with pesudo headers :method, :path, and :scheme
+    /// get header, starting with the pesudo headers
+    /// :method, :path, :scheme, :x-path, and :x-query
     /// @param[inout] http session instance
     /// @param[in] name header name pointer
     /// @param[in] value header value pointer
@@ -176,26 +187,28 @@ struct ews_http_ops {
 };
 
 #if !defined(EWS_PRIVATE_DEFS)
-/// http struct (public view)
+/// http session struct (public view)
 struct ews_http {
     /// http ops
     ews_http_ops_t *ops;
+    /// current route handler
+    const ews_route_t *route;
+    /// http session data
+    ews_sess_t *sess;
+    /// user session data
+    void *user;
 };
 #endif
 
 #if !defined(EWS_PRIVATE_DEFS)
-/// http session struct (public view)
-struct ews_http_sess {
-    /// current route handler
-    const ews_route_t *route;
+/// http session data struct (public view)
+struct ews_sess {
     /// current session state
     const ews_state_t state;
     /// session flags
-    const ews_http_flags_t flags;
+    const ews_flags_t flags;
     /// current state iteration
     const int state_count;
-    /// user session data
-    void *user;
 };
 #endif
 
@@ -234,14 +247,85 @@ bool ews_routes_append(ews_t *ews, const char *pattern, ews_handler_t handler,
         int argc, ...);
 
 /// clear the list of route handlers
-/// @param[in] ews webs server instance
+/// @param[inout] ews webs server instance
 void ews_routes_clear(ews_t *ews);
 
 /// a demo route handler to test functionality
-/// @param[in] sess session instance
-/// @param[in] state current session state
+/// @param[inout] http session instance
+/// @param[in] sess session data
 /// @return route handler status
-ews_status_t ews_routes_test_handler(ews_http_t *http, ews_http_sess_t *sess);
+ews_status_t ews_routes_test_handler(ews_http_t *http);
+
+/// a route handler that serves files from a directory
+/// @param[inout] http session instance
+/// @param[in] sess session data
+/// @return route handler status
+ews_status_t ews_routes_stdio_get_handler(ews_http_t *http);
+
+/// @}
+////////////////////////////////////////////////////////////////////////////////
+/// @defgroup ews_ws Websockets
+/// @{
+
+#define EWS_WS_FLAG_FIN     0x01
+#define EWS_WS_FLAG_BIN     0x02
+
+/// ws ops struct
+struct ews_ws_ops {
+    /// recv data
+    /// @param[inout] ws session instance
+    /// @param[out] buf buffer, can be null to discard data
+    /// @param[in] buf_sz buffer size, -1 for all (useful for discarding)
+    /// @returns < 0 on error, 0 try again later, > 0 bytes received
+    /// @note this function may not return the ammount of data requested, this
+    ///       is expected behavior
+    int (*recv)(ews_ws_t *ws, int *flags, char *buf, int buf_sz);
+
+    /// send data
+    /// @param[inout] ws session instance
+    /// @param[in] buf buffer
+    /// @param[in] buf_sz buffer size, -1 for strlen()
+    /// @returns < 0 on error, 0 try again later, > 0 num bytes transmitted
+    /// @note this function tries best effort to send all the data, but can
+    ///       timeout and will return error in that case.
+    int (*send)(ews_ws_t *ws, int flags, const char *buf, int buf_sz);
+
+    /// send formatted data
+    /// @param[inout] ws session instance
+    /// @param[in] fmt format string
+    /// @param[in] ... format arguments
+    /// @returns < 0 on error, 0 try again later, > 0 num bytes transmitted
+    /// @note this function tries best effort to send all the data, but can
+    ///       timeout and will return error in that case.
+    int (*sendf)(ews_ws_t *ws, int flags, const char *fmt, ...);
+};
+
+#if !defined(EWS_PRIVATE_DEFS)
+/// ws session struct (public view)
+struct ews_ws {
+    /// ws ops
+    const ews_ws_ops_t *ops;
+    /// route handler
+    ews_route_t *route;
+    /// user data
+    void *user;
+};
+#endif
+
+/// generate Sec-WebSocket-Accept for given Sec-WebSocket-Key
+/// @param[out] out accept string
+/// @param[in] out_len accept buffer size
+/// @param[in] key key string
+/// @return < 0 on error, 0 on success
+int ews_ws_gen_accept(char *out, int out_len, const char *key);
+
+/// a route handler that upgrades to a websocket
+/// the route handler expects at least one argument: a function pointer for the
+///     websocket's main loop
+/// @param[inout] http session instance
+/// @param[in] sess session data
+/// @return route handler status
+ews_status_t ews_ws_route_handler(ews_http_t *http);
 
 /// @}
 ////////////////////////////////////////////////////////////////////////////////
