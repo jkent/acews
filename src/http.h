@@ -18,8 +18,8 @@ typedef struct ews_http_conn ews_http_conn_t;
 struct ews_http_conn {
     ews_sock_t *sock;
     char buf[CONFIG_EWS_SESSION_BUFSIZE];
-    int bufpos;
-    int buflen;
+    size_t bufpos;
+    size_t buflen;
 };
 
 typedef struct ews_req ews_req_t;
@@ -27,15 +27,18 @@ typedef struct ews_req ews_req_t;
 /// http request data
 struct ews_req {
     const char *method;
+    size_t method_len;
     const char *path;
+    size_t path_len;
     const char *headers;
     const char *hdr_name;
 
     const char *x_path;
-    int x_path_len;
+    size_t x_path_len;
     const char *x_query;
+    size_t x_query_len;
 
-    int length, consumed;
+    ssize_t length, consumed;
 
     const char *boundary;
     int boundary_len;
@@ -45,13 +48,15 @@ typedef struct ews_rsp ews_rsp_t;
 
 /// http response data
 struct ews_rsp {
-    int length, produced;
+    ssize_t length, produced;
 };
 
-#define EWS_FLAGS_KEEPALIVE         (1 <<  8)
-#define EWS_FLAGS_RSP_CHUNKED       (1 <<  9)
-#define EWS_FLAGS_RSP_STARTED       (1 << 10)
-#define EWS_FLAGS_WEBSOCKET         (1 << 11)
+enum {
+    EWS_FLAGS_KEEPALIVE     = (1 <<  8),
+    EWS_FLAGS_RSP_CHUNKED   = (1 <<  9),
+    EWS_FLAGS_RSP_STARTED   = (1 << 10),
+    EWS_FLAGS_WEBSOCKET     = (1 << 11),
+};
 
 typedef struct ews_sess ews_sess_t;
 

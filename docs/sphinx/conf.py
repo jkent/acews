@@ -17,7 +17,7 @@ if subprocess.call(f'doxygen ../Doxyfile', shell=True) != 0:
     raise RuntimeError('Doxygen call failed')
 
 project = 'ACEWS<br>Another C Embedded Web Server'
-copyright = '2024 Jeff Kent and ACEWS Contributors'
+copyright = '2025 Jeff Kent and ACEWS Contributors'
 author = 'Jeff Kent'
 release = '0.1'
 

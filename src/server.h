@@ -13,6 +13,7 @@
 # include <mbedtls/x509.h>
 #endif
 
+#define EWS_PRIVATE_DEFS
 #include "client.h"
 #include "ews.h"
 #include "ews_port.h"

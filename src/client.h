@@ -7,6 +7,7 @@
 # include <mbedtls/ssl.h>
 #endif
 
+#define EWS_PRIVATE_DEFS
 #include "ews_port.h"
 #include "socket.h"
 

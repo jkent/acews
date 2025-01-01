@@ -3,6 +3,9 @@
 
 #include <stdarg.h>
 
+#include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
 #include "ews.h"
 
 
@@ -12,7 +15,7 @@ struct ews_route {
     ews_route_t *next;
     const char *pattern;
     ews_handler_t handler;
-    int argc;
+    size_t argc;
     void *argv[0];
 };
 

@@ -11,6 +11,7 @@
 # include <mbedtls/x509.h>
 #endif
 
+#define EWS_PRIVATE_DEFS
 #include "server.h"
 #include "ews_port.h"
 #include "listener.h"
@@ -32,15 +33,15 @@ ews_t *ews_init(const ews_config_t *config)
         memcpy(&ews->config, config, sizeof(ews->config));
     }
 
-    if (ews->config.idle_timeout <= 0) {
+    if (ews->config.idle_timeout == 0) {
         ews->config.idle_timeout = CONFIG_EWS_IDLE_TIMEOUT_DFLT;
     }
 
 #if CONFIG_EWS_HTTP_CLIENTS > 0
-    if (ews->config.http_listen_port <= 0) {
+    if (ews->config.http_listen_port == 0) {
         ews->config.http_listen_port = 80;
     }
-    if (config && ews->config.http_listen_backlog < 0) {
+    if (config && ews->config.http_listen_backlog == UINT16_MAX) {
         ews->config.http_listen_backlog = 0;
     } else if (ews->config.http_listen_backlog == 0) {
         ews->config.http_listen_backlog = CONFIG_EWS_HTTP_BACKLOG_DFLT;
@@ -52,10 +53,10 @@ ews_t *ews_init(const ews_config_t *config)
 #endif
 
 #if CONFIG_EWS_HTTPS_CLIENTS > 0
-    if (ews->config.https_listen_port <= 0) {
+    if (ews->config.https_listen_port == 0) {
         ews->config.https_listen_port = 443;
     }
-    if (config && ews->config.https_listen_backlog < 0) {
+    if (config && ews->config.https_listen_backlog == UINT16_MAX0) {
         ews->config.https_listen_backlog = 0;
     } else if (ews->config.https_listen_backlog == 0) {
         ews->config.https_listen_backlog = CONFIG_EWS_HTTPS_BACKLOG_DFLT;

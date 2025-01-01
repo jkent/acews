@@ -61,6 +61,7 @@ static int parse_req(ews_http_t *http)
         return -1;
     }
     *po++ = '\0';
+    http->_sess._req.method_len = strlen(http->_sess._req.method);
 
     http->_sess._req.path = po;
     while (*pi && !isspace(*pi)) {
@@ -76,6 +77,7 @@ static int parse_req(ews_http_t *http)
         pi++;
     }
     *po++ = '\0';
+    http->_sess._req.path_len = strlen(http->_sess._req.path);
     if (!have_ver) {
         if (*pi != '\r' || *(pi + 1) != '\n') {
             return -1;
@@ -215,7 +217,7 @@ static int parse_mp(ews_http_t *http)
 }
 
 static int http_ops_get_hdr(ews_http_t *http, const char **name,
-        const char **value)
+        const char **value, size_t *value_len)
 {
     const char *p;
 
@@ -235,22 +237,45 @@ static int http_ops_get_hdr(ews_http_t *http, const char **name,
 
     if (*name == names[0]) {
         *value = http->_sess._req.method;
+        if (value_len) {
+            *value_len = http->_sess._req.method_len;
+        }
         http->_sess._req.hdr_name = names[1];
         return 1;
     } else if (*name == names[1]) {
         *value = http->_sess._req.path;
+        if (value_len) {
+            *value_len = http->_sess._req.path_len;
+        }
         http->_sess._req.hdr_name = names[2];
         return 1;
     } else if (*name == names[2]) {
         *value = http->_conn.sock->flags & EWS_SOCK_FLAG_TLS ? "https" : "http";
-        http->_sess._req.hdr_name = names[3];
+        if (value_len) {
+            *value_len = http->_conn.sock->flags & EWS_SOCK_FLAG_TLS ? 5 : 4;
+        }
+        if (http->_sess._req.x_path) {
+            http->_sess._req.hdr_name = names[3];
+        } else {
+            http->_sess._req.hdr_name = http->_sess._req.headers;
+        }
         return 1;
     } else if (*name == names[3]) {
         *value = http->_sess._req.x_path;
-        http->_sess._req.hdr_name = names[4];
+        if (value_len) {
+            *value_len = http->_sess._req.x_path_len;
+        }
+        if (http->_sess._req.x_query) {
+            http->_sess._req.hdr_name = names[4];
+        } else {
+            http->_sess._req.hdr_name = http->_sess._req.headers;
+        }
         return 1;
     } else if (*name == names[4]) {
         *value = http->_sess._req.x_query;
+        if (value_len) {
+            *value_len = http->_sess._req.x_query_len;
+        }
         http->_sess._req.hdr_name = http->_sess._req.headers;
         return 1;
     } else if (!**name) {
@@ -260,6 +285,9 @@ static int http_ops_get_hdr(ews_http_t *http, const char **name,
     while (*p++)
         ;
     *value = p;
+    if (value_len) {
+        *value_len = strlen(p);
+    }
     while (*p++)
         ;
 
@@ -267,9 +295,9 @@ static int http_ops_get_hdr(ews_http_t *http, const char **name,
     return 1;
 }
 
-static int http_ops_recv(ews_http_t *http, char *buf, int buf_sz)
+static ssize_t http_ops_recv(ews_http_t *http, char *buf, ssize_t buf_sz)
 {
-    int len, pos;
+    ssize_t len, pos;
 
     if (http->_sess.state != EWS_STATE_REQ_BDY &&
             http->_sess.state != EWS_STATE_REQ_MP_BDY) {
@@ -278,7 +306,8 @@ static int http_ops_recv(ews_http_t *http, char *buf, int buf_sz)
 
     // if request length specified, limit what we can copy out
     if (http->_sess._req.length >= 0) {
-        buf_sz = MIN(buf_sz, http->_sess._req.length - http->_sess._req.consumed);
+        buf_sz = MIN(buf_sz, http->_sess._req.length -
+                http->_sess._req.consumed);
     }
 
     // limit to buflen
@@ -366,7 +395,7 @@ data:
 static int http_ops_start_rsp(ews_http_t *http, int code, const char *status)
 {
     ews_sock_t *sock = http->_conn.sock;
-    int ret;
+    ssize_t ret;
 
     if (http->_sess.flags & EWS_FLAGS_RSP_STARTED) {
         return -1;
@@ -383,13 +412,14 @@ static int http_ops_start_rsp(ews_http_t *http, int code, const char *status)
 
     http->_sess.flags |= EWS_FLAGS_RSP_STARTED;
 
-    return ret;
+    return 1;
 }
 
 static int http_ops_send_hdr(ews_http_t *http, const char *name,
         const char *value)
 {
     ews_sock_t *sock = http->_conn.sock;
+    ssize_t ret;
 
     if (!(http->_sess.flags & EWS_FLAGS_RSP_STARTED)) {
         return -1;
@@ -407,13 +437,19 @@ static int http_ops_send_hdr(ews_http_t *http, const char *name,
         if (strstr(value, "chunked")) {
             http->_sess.flags |= EWS_FLAGS_RSP_CHUNKED;
         }
+#if CONFIG_EWS_WS_CLIENTS > 0
     } else if (strcasecmp(name, "Upgrade") == 0) {
         if (strstr(value, "websocket")) {
             http->_sess.flags |= EWS_FLAGS_WEBSOCKET;
         }
+#endif
     }
 
-    return sock->ops->sendf(sock, "%s: %s\r\n", name, value);
+    ret = sock->ops->sendf(sock, "%s: %s\r\n", name, value);
+    if (ret <= 0) {
+        return ret;
+    }
+    return 1;
 }
 
 static int http_vsendf_hdr(ews_http_t *http, const char *name, const char *fmt,
@@ -443,7 +479,7 @@ static int http_ops_sendf_hdr(ews_http_t *http, const char *name,
     return ret;
 }
 
-static int http_ops_send(ews_http_t *http, const char *buf, int buf_sz)
+static ssize_t http_ops_send(ews_http_t *http, const char *buf, ssize_t buf_sz)
 {
     ews_sock_t *sock = http->_conn.sock;
 
@@ -452,7 +488,8 @@ static int http_ops_send(ews_http_t *http, const char *buf, int buf_sz)
     }
 
     if (http->_sess._rsp.length >= 0) {
-        buf_sz = MIN(buf_sz, http->_sess._rsp.length - http->_sess._rsp.produced);
+        buf_sz = MIN(buf_sz, http->_sess._rsp.length -
+                http->_sess._rsp.produced);
     }
 
     if (http->_sess.flags & EWS_FLAGS_RSP_CHUNKED) {
@@ -480,7 +517,7 @@ static int http_ops_send(ews_http_t *http, const char *buf, int buf_sz)
     return buf_sz;
 }
 
-static int http_vsendf(ews_http_t *http, const char *fmt, va_list va)
+static ssize_t http_vsendf(ews_http_t *http, const char *fmt, va_list va)
 {
     va_list va2;
     int len;
@@ -493,10 +530,10 @@ static int http_vsendf(ews_http_t *http, const char *fmt, va_list va)
     return http_ops_send(http, buf, len);
 }
 
-static int http_ops_sendf(ews_http_t *http, const char *fmt, ...)
+static ssize_t http_ops_sendf(ews_http_t *http, const char *fmt, ...)
 {
     va_list va;
-    int ret;
+    ssize_t ret;
 
     va_start(va, fmt);
     ret = http_vsendf(http, fmt, va);
@@ -539,19 +576,20 @@ static int start_req(ews_http_t *http)
 
     http->_conn.bufpos += pos + 4;
     http->_conn.buflen -= pos + 4;
-    http->_sess._req.hdr_name = http->_sess._req.method;
 
-    http->_sess._req.x_path_len = strlen(http->_sess._req.path) + 1;
-    http->_sess._req.x_path = malloc(http->_sess._req.x_path_len);
-    if (!http->_sess._req.x_path) {
-        return -1;
+    if (http->_sess._req.path[0] == '/') {
+        http->_sess._req.x_path = strdup(http->_sess._req.path);
+        if (!http->_sess._req.x_path) {
+            return -1;
+        }
+        parse_uri(http->_sess._req.path, (char *) http->_sess._req.x_path,
+                &http->_sess._req.x_path_len, &http->_sess._req.x_query,
+                &http->_sess._req.x_query_len);
     }
 
-    parse_uri(http->_sess._req.path, (char *) http->_sess._req.x_path,
-            &http->_sess._req.x_query);
-
     LOGI("#%d %s %s", http->_conn.sock->fd, http->_sess._req.method,
-            http->_sess._req.x_path);
+            http->_sess._req.x_path ? http->_sess._req.x_path :
+            http->_sess._req.path);
 
     return 1;
 }
@@ -589,11 +627,13 @@ static ews_status_t find_route(ews_http_t *http)
 {
     ews_t *ews = http->_conn.sock->ews;
     ews_status_t status;
+    const char *path = http->_sess._req.x_path ? http->_sess._req.x_path :
+            http->_sess._req.path;
 
     http->route = ews->route_first;
 
     while (http->route) {
-        if (!fnmatch(http->route->pattern, http->_sess._req.x_path)) {
+        if (!fnmatch(http->route->pattern, path)) {
             http->route = http->route->next;
             continue;
         }
@@ -654,24 +694,23 @@ static void finalize(ews_http_t *http)
 
     // free and zero session data
     if (http->_sess._req.x_path) {
-        memset((void *) http->_sess._req.x_path, 0, http->_sess._req.x_path_len);
         free((void *) http->_sess._req.x_path);
     }
     if (http->_sess._req.boundary) {
-        memset((void *) http->_sess._req.boundary, 0,
-                http->_sess._req.boundary_len);
         free((void *) http->_sess._req.boundary);
     }
 
     // zero session data
     memset(&http->_sess, 0, sizeof(http->_sess));
 
+#if CONFIG_EWS_WS_CLIENTS > 0 || CONFIG_EWS_WSS_CLIENTS > 0
     if (http->_sess.flags & EWS_FLAGS_WEBSOCKET) {
         ws_upgrade(http, sock);
 
         // free session data
         free(http);
     }
+#endif
 }
 
 static void handle_error(ews_http_t *http, int code)
@@ -891,7 +930,8 @@ static void do_read(ews_sock_t *sock)
 {
     ews_http_t *http = sock->user;
     ews_status_t status;
-    int ret, len;
+    size_t len;
+    int ret;
 
     ret = fill_buf(http);
     if (ret < 0) {

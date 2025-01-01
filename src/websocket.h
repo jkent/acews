@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
 #include "ews.h"
 #include "route.h"
 
+#if CONFIG_EWS_WS_CLIENTS > 0 || CONFIG_EWS_WSS_CLIENTS > 0
 
-#define WS_STATE_TYPE_NONE      (0 <<  0)
-#define WS_STATE_TYPE_TEXT      (1 <<  0)
-#define WS_STATE_TYPE_BINARY    (2 <<  0)
-#define WS_STATE_TYPE_MASK      (3 <<  2)
+enum {
+    WS_STATE_TYPE_NONE      = (0 <<  0),
+    WS_STATE_TYPE_TEXT      = (1 <<  0),
+    WS_STATE_TYPE_BINARY    = (2 <<  0),
+    WS_STATE_TYPE_MASK      = (3 <<  2),
+};
 
 typedef struct ews_ws_send ews_ws_send_t;
 struct ews_ws_send {
@@ -40,3 +46,5 @@ struct ews_ws {
 /// @param[inout] http session instance
 /// @param[in] http_sock http socket
 int ws_upgrade(ews_http_t *http, ews_sock_t *http_sock);
+
+#endif

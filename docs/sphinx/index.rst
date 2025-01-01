@@ -1,9 +1,11 @@
-CWHTTP Documentation
-====================
+ACEWS Library Documentation
+===========================
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Contents:
 
    readme
-   apis/index
+   guide/index
+   api/index
+   internals/index

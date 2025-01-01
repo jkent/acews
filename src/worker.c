@@ -3,6 +3,9 @@
 #include <string.h>
 #include <sys/select.h>
 
+#include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
 #include "worker.h"
 #include "server.h"
 #include "socket.h"
@@ -13,8 +16,11 @@ static void task_reaper(void *arg);
 
 bool ews_worker_init(ews_worker_t *worker)
 {
-    return ews_thread_init(&worker->thread, worker_task, worker,
-            CONFIG_EWS_WORKER_STACK_SIZE);
+    if (ews_thread_init(&worker->thread, worker_task, worker,
+            CONFIG_EWS_WORKER_STACK_SIZE) < 0) {
+        return false;
+    }
+    return true;
 }
 
 void ews_worker_destroy(ews_worker_t *worker)
@@ -97,8 +103,8 @@ static void worker_loop(ews_worker_t *worker)
     ews_t *ews = container_of(worker, ews_t, worker);
     struct timeval tv;
     fd_set rfds, wfds;
-    uint32_t now;
     int fd_max = 0;
+    uint32_t now;
     int ret;
 
     now = ews_time_ms();
@@ -108,7 +114,7 @@ static void worker_loop(ews_worker_t *worker)
 
 #if CONFIG_EWS_HTTP_CLIENTS > 0
     pre_select(&ews->http_listener.sock, now, &fd_max, &rfds, &wfds);
-    for (int i = 0; i < countof(ews->http_client); i++) {
+    for (size_t i = 0; i < countof(ews->http_client); i++) {
         ews_sock_t *sock = &ews->http_client[i].sock;
         pre_select(sock, now, &fd_max, &rfds, &wfds);
     }
@@ -116,7 +122,7 @@ static void worker_loop(ews_worker_t *worker)
 
 #if CONFIG_EWS_HTTPS_CLIENTS > 0
     pre_select(&ews->https_listener.sock, now, &fd_max, &rfds, &wfds);
-    for (int i = 0; i < countof(ews->https_client); i++) {
+    for (size_t i = 0; i < countof(ews->https_client); i++) {
         ews_sock_t *sock = &ews->https_client[i].sock;
         pre_select(sock, now, &fd_max, &rfds, &wfds);
     }
@@ -135,7 +141,7 @@ static void worker_loop(ews_worker_t *worker)
 
 #if CONFIG_EWS_HTTP_CLIENTS > 0
     post_select(&ews->http_listener.sock, now, &rfds, &wfds);
-    for (int i = 0; i < countof(ews->http_client); i++) {
+    for (size_t i = 0; i < countof(ews->http_client); i++) {
         ews_sock_t *sock = &ews->http_client[i].sock;
         post_select(sock, now, &rfds, &wfds);
     }
@@ -143,7 +149,7 @@ static void worker_loop(ews_worker_t *worker)
 
 #if CONFIG_EWS_HTTPS_CLIENTS > 0
     post_select(&ews->https_listener.sock, now, &rfds, &wfds);
-    for (int i = 0; i < countof(ews->https_client); i++) {
+    for (size_t i = 0; i < countof(ews->https_client); i++) {
         ews_sock_t *sock = &ews->https_client[i].sock;
         post_select(sock, now, &rfds, &wfds);
     }

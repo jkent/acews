@@ -22,7 +22,7 @@ static const ews_sock_evt_t listener_https_sock_evt;
 #endif
 
 bool listener_init(ews_t *ews, ews_listener_t *listener, uint16_t port,
-        int backlog, bool tls)
+        uint16_t backlog, bool tls)
 {
     ews_sock_t *sock = &listener->sock;
     socklen_t socklen;

@@ -15,12 +15,12 @@
 #include "socket.h"
 
 
-static bool ews_route_vappend(ews_t *ews, const char *pattern,
-        ews_handler_t handler, int argc, va_list args)
+static int ews_route_vappend(ews_t *ews, const char *pattern,
+        ews_handler_t handler, size_t argc, va_list args)
 {
     ews_route_t *route = calloc(1, sizeof(*route) + sizeof(void *) * argc);
     if (route == NULL) {
-        return false;
+        return -1;
     }
 
     if (ews->route_first == NULL) {
@@ -33,18 +33,18 @@ static bool ews_route_vappend(ews_t *ews, const char *pattern,
     route->pattern = pattern;
     route->handler = handler;
     route->argc = argc;
-    for (int i = 0; i < argc; i++) {
+    for (size_t i = 0; i < argc; i++) {
         route->argv[i] = va_arg(args, void *);
     }
 
-    return true;
+    return 0;
 }
 
-bool ews_routes_append(ews_t *ews, const char *pattern,
-        ews_handler_t handler, int argc, ...)
+int ews_routes_append(ews_t *ews, const char *pattern, ews_handler_t handler,
+        size_t argc, ...)
 {
     va_list args;
-    bool ret;
+    int ret;
 
     va_start(args, argc);
     ret = ews_route_vappend(ews, pattern, handler, argc, args);
@@ -93,13 +93,14 @@ const ews_route_t ews_route_404 = {
 ews_status_t ews_routes_test_handler(ews_http_t *http)
 {
     const char *name, *value;
+    size_t value_len;
     char buf[1024];
     int ret;
 
     switch (http->sess->state) {
     case EWS_STATE_REQ:
-        while (http->ops->get_hdr(http, &name, &value) > 0) {
-            printf("hdr: %s: %s\n", name, value);
+        while (http->ops->get_hdr(http, &name, &value, &value_len) > 0) {
+            printf("hdr: %s: (%d)%s\n", name, (int) value_len, value);
         }
         return EWS_STATUS_MATCH;
 
@@ -110,8 +111,8 @@ ews_status_t ews_routes_test_handler(ews_http_t *http)
         break;
 
     case EWS_STATE_REQ_MP:
-        while (http->ops->get_hdr(http, &name, &value) > 0) {
-            printf("mp_hdr: %s: %s\n", name, value);
+        while (http->ops->get_hdr(http, &name, &value, &value_len) > 0) {
+            printf("mp_hdr: %s: (%d)%s\n", name, (int) value_len, value);
         }
         break;
 
@@ -135,6 +136,44 @@ ews_status_t ews_routes_test_handler(ews_http_t *http)
     return EWS_STATUS_NEXT;
 }
 
+ews_status_t ews_routes_directory_rediret_handler(ews_http_t *http)
+{
+    const char *name, *value;
+    char *path = http->user;
+    size_t value_len;
+
+    switch (http->sess->state) {
+    case EWS_STATE_REQ:
+        while (http->ops->get_hdr(http, &name, &value, &value_len)) {
+            if (strcmp(name, ":x-path") == 0) {
+                if (value[value_len - 1] == '/' || strchr(value, '.')) {
+                    return EWS_STATUS_NOMATCH;
+                }
+                path = malloc(value_len + 2);
+                if (!path) {
+                    return EWS_STATUS_ERROR;
+                }
+                sprintf(path, "%s/", value);
+                http->user = path;
+                return EWS_STATUS_MATCH;
+            }
+        }
+        return EWS_STATUS_NOMATCH;
+
+    case EWS_STATE_RSP:
+        http->ops->start_rsp(http, 301, "Moved Permanently");
+        http->ops->send_hdr(http, "Location", path);
+        break;
+
+    case EWS_STATE_FIN:
+        free(http->user);
+        http->user = NULL;
+        break;
+    }
+
+    return EWS_STATUS_SKIP;
+}
+
 typedef struct stdio_get_data stdio_get_data_t;
 struct stdio_get_data {
     FILE *file;
@@ -144,35 +183,35 @@ struct stdio_get_data {
 ews_status_t ews_routes_stdio_get_handler(ews_http_t *http)
 {
     stdio_get_data_t *data = (stdio_get_data_t *) http->user;
-    const char *name, *value;
+    const char *name, *value, *base;
+    size_t value_len;
     char buf[1024];
     struct stat st;
-    int ret, end;
+    int ret;
 
     switch (http->sess->state) {
     case EWS_STATE_REQ:
-        while (http->ops->get_hdr(http, &name, &value)) {
+        while (http->ops->get_hdr(http, &name, &value, &value_len)) {
             if (strcmp(name, ":method") == 0) {
                 if (strcmp(value, "GET") != 0) {
                     return EWS_STATUS_NOMATCH;
                 }
             }
             if (strcmp(name, ":x-path") == 0) {
-                snprintf(buf, sizeof(buf), "%s%s",
-                        (const char *) http->route->argv[0], value);
-                ret = stat(buf, &st);
+                value += (size_t) http->route->argv[0];
+                base = (const char *) http->route->argv[1];
+                ret = stat(value, &st);
                 if (ret < 0 || !S_ISREG(st.st_mode)) {
-                    end = strlen(value);
-                    if (end > 0) {
-                        end--;
-                    }
-                    if (value[end] == '/') {
-                        snprintf(buf, sizeof(buf), "%s%sindex.html",
-                                (const char *) http->route->argv[0],
+                    snprintf(buf, sizeof(buf), "%s%s", base, value);
+                    ret = stat(buf, &st);
+                }
+                if (ret < 0 || !S_ISREG(st.st_mode)) {
+                    value_len--;
+                    if (value[value_len] == '/') {
+                        snprintf(buf, sizeof(buf), "%s%sindex.html", base,
                                 value);
                     } else {
-                        snprintf(buf, sizeof(buf), "%s%s/index.html",
-                                (const char *) http->route->argv[0],
+                        snprintf(buf, sizeof(buf), "%s%s/index.html", base,
                                 value);
                     }
                     ret = stat(buf, &st);
@@ -194,7 +233,7 @@ ews_status_t ews_routes_stdio_get_handler(ews_http_t *http)
                 return EWS_STATUS_MATCH;
             }
         }
-        break;
+        return EWS_STATUS_NOMATCH;
 
     case EWS_STATE_RSP:
         http->ops->start_rsp(http, 200, "OK");
@@ -203,17 +242,17 @@ ews_status_t ews_routes_stdio_get_handler(ews_http_t *http)
 
     case EWS_STATE_RSP_BDY:
         ret = fread(buf, 1, sizeof(data), data->file);
-        if (ret > 0) {
-            http->ops->send(http, buf, ret);
-            return EWS_STATUS_MORE;
-        }
-        fclose(data->file);
         if (ret < 0) {
             return EWS_STATUS_ERROR;
         }
-        return EWS_STATUS_DONE;
+        if (ret == 0) {
+            return EWS_STATUS_DONE;
+        }
+        http->ops->send(http, buf, ret);
+        return EWS_STATUS_MORE;
 
     case EWS_STATE_FIN:
+        fclose(data->file);
         free(data);
         http->user = NULL;
         break;

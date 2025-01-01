@@ -129,14 +129,14 @@ struct ews_semaphore {
 /// @param[in] semaphore pointer to ews_semaphore
 /// @param[in] max maximum semaphore value
 /// @param[in] initial initial semaphore value
-/// @return 1 on success, 0 on error
+/// @return -1 on error, 0 on success
 static inline int ews_semaphore_init(ews_semaphore_t *semaphore, uint32_t max,
         uint32_t initial)
 {
     assert(semaphore != NULL);
 
     xSemaphoreCreateCountingStatic(max, initial, &semaphore->semaphore);
-    return 1;
+    return 0;
 }
 
 /// tear down a semaphore
@@ -151,24 +151,30 @@ static inline void ews_sempaphore_destroy(ews_semaphore_t *semaphore)
 /// take on a semapore
 /// @param semaphore pointer to ews_semaphore
 /// @param timeout_ms timeout; 0 for no timeout, @a UINT32_MAX to wait forever
-/// @return 1 on success, 0 on timeout or error
+/// @return -1 on timeout or error, 0 on success
 static inline int ews_semaphore_take(ews_semaphore_t *semaphore,
         uint32_t timeout_ms)
 {
     assert(semaphore != NULL);
 
-    return xSemaphoreTake((SemaphoreHandle_t) &semaphore->semaphore,
-            pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    if (xSemaphoreTake((SemaphoreHandle_t) &semaphore->semaphore,
+            pdMS_TO_TICKS(timeout_ms))) {
+        return 0;
+    }
+    return -1;
 }
 
 /// give on a semaphore
 /// @param semaphore pointer to ews_semaphore
-/// @return 1 on sucess, 0 on max value reached or error
+/// @return -1 on max value reached or error, 0 on success
 static inline int ews_semaphore_give(ews_semaphore_t *semaphore)
 {
     assert(semaphore != NULL);
 
-    return xSemaphoreGive((SemaphoreHandle_t) &semaphore->semaphore) == pdTRUE;
+    if (xSemaphoreGive((SemaphoreHandle_t) &semaphore->semaphore)) {
+        return 0;
+    }
+    return -1;
 }
 
 /// @}
@@ -209,7 +215,7 @@ static void thread_wrapper(void *arg)
 /// @param[in] func thread function
 /// @param[in] arg thread argument
 /// @param[in] stack_words size of the stack in number of machine words
-/// @return 1 on success, 0 on error
+/// @return -1 on error, 0 on success
 static inline int ews_thread_init(ews_thread_t *thread, ews_thread_func_t func,
         void *arg, int stack_words)
 {
@@ -218,17 +224,18 @@ static inline int ews_thread_init(ews_thread_t *thread, ews_thread_func_t func,
     thread->func = func;
     thread->arg = arg;
 
-    return xTaskCreate(thread_wrapper, "ews", stack_words, thread,
-            tskIDLE_PRIORITY + 1, &thread->handle) == pdPASS;
+    if (xTaskCreate(thread_wrapper, "ews", stack_words, thread,
+            tskIDLE_PRIORITY + 1, &thread->handle)) {
+        return 0;
+    }
+    return -1;
 }
 
 /// tear down a thread
 /// @param[in] thread pointer to ews_thread
 static inline void ews_thread_destroy(ews_thread_t *thread)
 {
-    assert(thread != NULL);
-
-    if (thread == NULL) {
+    if (!thread) {
         vTaskDelete(NULL);
     } else {
         vTaskDelete(thread->handle);
@@ -270,7 +277,7 @@ static void timer_wrapper(TimerHandle_t handle)
 /// @param[in] autoreload @a true for periodic, @a false for one-shot
 /// @param[in] func timer handler function
 /// @param[in] arg timer handler argument
-/// @return 1 on success or 0 on failure
+/// @return -1 on error, 0 on success
 static inline int ews_timer_init(ews_timer_t *timer, int period_ms,
         bool autoreload, ews_timer_handler_t func, void *arg)
 {
@@ -278,13 +285,13 @@ static inline int ews_timer_init(ews_timer_t *timer, int period_ms,
 
     timer->handle = xTimerCreateStatic("ews", pdMS_TO_TICKS(period_ms),
             autoreload, timer, timer_wrapper, &timer->timer);
-    if (timer->handle == NULL) {
-        return 0;
+    if (!timer->handle) {
+        return -1;
     }
 
     timer->func = func;
     timer->arg = arg;
-    return 1;
+    return 0;
 }
 
 /// tear down a timer

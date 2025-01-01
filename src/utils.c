@@ -6,6 +6,9 @@
 #include <sys/types.h>
 #include <string.h>
 
+#include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
 #include "utils.h"
 
 
@@ -42,10 +45,10 @@ bool fnmatch(const char *pattern, const char *string)
     }
 }
 
-int find(const char *buf, int hlen, const char *s)
+ssize_t find(const char *buf, size_t hlen, const char *s)
 {
-    int nlen = strlen(s);
-    int i = 0, j = 0;
+    size_t nlen = strlen(s);
+    size_t i = 0, j = 0;
 
     if (hlen < nlen) {
         return -1;
@@ -64,10 +67,10 @@ int find(const char *buf, int hlen, const char *s)
     return -1;
 }
 
-int findp(const char *buf, int hlen, const char *s)
+ssize_t findp(const char *buf, size_t hlen, const char *s)
 {
-    int nlen = strlen(s);
-    int i = 0, j = 0;
+    size_t nlen = strlen(s);
+    size_t i = 0, j = 0;
 
     while (i <= hlen) {
         if (buf[i + j] == s[j]) {
@@ -82,15 +85,15 @@ int findp(const char *buf, int hlen, const char *s)
     return -1;
 }
 
-void parse_uri(const char *uri, char *path, const char **query)
+void parse_uri(const char *uri, char *path, size_t *path_len,
+        const char **query, size_t *query_len)
 {
     const char *pi = uri;
     char *po = path;
-    int len = 0;
 
-    if (query) {
-        *query = NULL;
-    }
+    *path_len = 0;
+    *query_len = 0;
+    *query = NULL;
 
     while (*pi) {
         if (*pi == '%' && isxdigit(*(pi + 1)) && isxdigit(*(pi + 2))) {
@@ -111,9 +114,9 @@ void parse_uri(const char *uri, char *path, const char **query)
                 } else if (*(pi + 2) == '.') {
                     if ((*pi + 3) == '\0' || (*pi + 3) == '/') {
                         pi += 3;
-                        while (len > 0) {
+                        while (*path_len > 0) {
                             po--;
-                            len--;
+                            (*path_len)--;
                             if (*po == '/') {
                                 break;
                             }
@@ -121,27 +124,23 @@ void parse_uri(const char *uri, char *path, const char **query)
                         continue;
                     }
                 }
-            } else if (len > 0 && *(po - 1) == '/') {
+            } else if (*path_len > 0 && *(po - 1) == '/') {
                 pi++;
                 continue;
             }
             *po++ = *pi++;
         } else if (*pi == '?') {
-            pi++;
-            if (query) {
-                *query = pi;
-            }
+            *query = pi++;
             break;
         } else {
             *po++ = *pi++;
         }
-        len++;
+        (*path_len)++;
     }
-
     *po++ = '\0';
-    if (query && *query) {
-        po = (char *) *query;
 
+    if (*query) {
+        po = (char *) *query;
         while (*pi) {
             if (*pi == '%' && isxdigit(*(pi + 1)) && isxdigit(*(pi + 2))) {
                 pi++;
@@ -156,9 +155,8 @@ void parse_uri(const char *uri, char *path, const char **query)
             } else {
                 *po++ = *pi++;
             }
-            len++;
+            (*query_len)++;
         }
-
-        *po++ = '\0';
+        *po = '\0';
     }
 }

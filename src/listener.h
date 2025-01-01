@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 #include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
 #include "socket.h"
 
 
@@ -14,4 +16,4 @@ struct ews_listener {
 };
 
 bool listener_init(ews_t *ews, ews_listener_t *listener, uint16_t port,
-        int backlog, bool tls);
+        uint16_t backlog, bool tls);

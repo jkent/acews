@@ -5,8 +5,10 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
-#include "ews.h"
 #include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
+#include "ews.h"
 
 
 typedef enum ews_sock_flags ews_sock_flags_t;
@@ -32,9 +34,9 @@ enum ews_sock_flags {
 };
 
 struct ews_sock_ops {
-    int (*send)(ews_sock_t *sock, const void *buf, int len);
-    int (*sendf)(ews_sock_t *sock, const char *fmt, ...);
-    int (*recv)(ews_sock_t *sock, void *buf, int len);
+    ssize_t (*send)(ews_sock_t *sock, const void *buf, ssize_t len);
+    ssize_t (*sendf)(ews_sock_t *sock, const char *fmt, ...);
+    ssize_t (*recv)(ews_sock_t *sock, void *buf, size_t len);
     bool (*send_ok)(ews_sock_t *sock);
     bool (*recv_ok)(ews_sock_t *sock);
     void (*shutdown)(ews_sock_t *sock);

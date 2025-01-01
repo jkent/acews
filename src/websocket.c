@@ -4,8 +4,10 @@
 
 #include "ews_config.h"
 
+#if CONFIG_EWS_WS_CLIENTS > 0 || CONFIG_EWS_WSS_CLIENTS > 0
 #include <mbedtls/base64.h>
 #include <mbedtls/sha1.h>
+
 
 #define EWS_PRIVATE_DEFS
 #include "ews.h"
@@ -16,16 +18,18 @@
 #include "websocket.h"
 
 
-#define OPCODE_CONT     0x0
-#define OPCODE_TEXT     0x1
-#define OPCODE_BIN      0x2
-#define OPCODE_CLOSE    0x8
-#define OPCODE_PING     0x9
-#define OPCODE_PONG     0xA
+enum {
+    OPCODE_CONT     = 0x0,
+    OPCODE_TEXT     = 0x1,
+    OPCODE_BIN      = 0x2,
+    OPCODE_CLOSE    = 0x8,
+    OPCODE_PING     = 0x9,
+    OPCODE_PONG     = 0xA,
+};
 
 #define FLAG_FIN        0x80
 
-int ews_ws_gen_accept(char *out, int out_len, const char *key)
+int ews_ws_gen_accept(char *out, size_t out_len, const char *key)
 {
     unsigned char s[61], buf[20];
     size_t len;
@@ -56,12 +60,11 @@ int ews_ws_gen_accept(char *out, int out_len, const char *key)
     return 0;
 }
 
-
-static int ws_send_hdr(ews_ws_t *ws, int opcode, int len)
+static int ws_send_hdr(ews_ws_t *ws, int opcode, size_t len)
 {
     ews_sock_t *sock = ws->_sock;
     uint8_t buf[10];
-    int i = 0;
+    size_t i = 0;
 
     buf[i++] = opcode;
     if (len >= 65536) {
@@ -89,8 +92,7 @@ static int ws_send_hdr(ews_ws_t *ws, int opcode, int len)
     return 0;
 }
 
-
-static int ws_ops_recv(ews_ws_t *ws, int *flags, char *buf, int buf_sz)
+static ssize_t ws_ops_recv(ews_ws_t *ws, int *flags, char *buf, ssize_t buf_sz)
 {
     ews_sock_t *sock = ws->_sock;
     uint8_t hdr[10];
@@ -115,7 +117,10 @@ static int ws_ops_recv(ews_ws_t *ws, int *flags, char *buf, int buf_sz)
             if (ret < 0 || hdr[2] || hdr[3] || hdr[4] || hdr[5]) {
                 return -1;
             }
-            ws->_recv.length = hdr[6] << 24 | hdr[7] << 16 | hdr[8] << 8 | hdr[9];
+            ws->_recv.length = hdr[6] << 24;
+            ws->_recv.length |= hdr[7] << 16;
+            ws->_recv.length |= hdr[8] << 8;
+            ws->_recv.length |= hdr[9];
         }
         ws->_recv.mask = !!(hdr[1] & 0x80);
         if (ws->_recv.mask) {
@@ -185,10 +190,11 @@ static int ws_ops_recv(ews_ws_t *ws, int *flags, char *buf, int buf_sz)
     return ret;
 }
 
-static int ws_ops_send(ews_ws_t *ws, int flags, const char *buf, int buf_sz)
+static ssize_t ws_ops_send(ews_ws_t *ws, int flags, const char *buf,
+        ssize_t buf_sz)
 {
     ews_sock_t *sock = ws->_sock;
-    int opcode;
+    uint8_t opcode;
 
     if (buf_sz < 0) {
         buf_sz = strlen(buf);
@@ -218,7 +224,7 @@ static int ws_ops_send(ews_ws_t *ws, int flags, const char *buf, int buf_sz)
     return buf_sz;
 }
 
-static int ws_vsendf(ews_ws_t *ws, int flags, const char *fmt, va_list va)
+static ssize_t ws_vsendf(ews_ws_t *ws, int flags, const char *fmt, va_list va)
 {
     va_list va2;
     int len;
@@ -231,10 +237,10 @@ static int ws_vsendf(ews_ws_t *ws, int flags, const char *fmt, va_list va)
     return ws_ops_send(ws, flags, buf, len);
 }
 
-static int ws_ops_sendf(ews_ws_t *ws, int flags, const char *fmt, ...)
+static ssize_t ws_ops_sendf(ews_ws_t *ws, int flags, const char *fmt, ...)
 {
     va_list va;
-    int ret;
+    ssize_t ret;
 
     va_start(va, fmt);
     ret = ws_vsendf(ws, flags, fmt, va);
@@ -324,10 +330,7 @@ int ws_upgrade(ews_http_t *http, ews_sock_t *http_sock)
 
     thread = &((ews_client_t *) ws_sock)->thread;
 
-    if (ews_thread_init(thread, ws_wrapper, ws, CONFIG_EWS_WS_STACK_SIZE)) {
-        return 0;
-    }
-    return -1;
+    return ews_thread_init(thread, ws_wrapper, ws, CONFIG_EWS_WS_STACK_SIZE);
 }
 
 typedef struct ws_route_data ws_route_data_t;
@@ -337,7 +340,6 @@ struct ws_route_data {
     char accept[29];
 };
 
-
 ews_status_t ews_ws_route_handler(ews_http_t *http)
 {
     ws_route_data_t *data = (ws_route_data_t *) http->user;
@@ -346,11 +348,11 @@ ews_status_t ews_ws_route_handler(ews_http_t *http)
 
     switch (http->sess->state) {
     case EWS_STATE_REQ:
-        data = malloc(sizeof(ws_route_data_t));
+        data = calloc(1, sizeof(ws_route_data_t));
         if (!data) {
             return EWS_STATUS_ERROR;
         }
-        while (http->ops->get_hdr(http, &name, &value) > 0) {
+        while (http->ops->get_hdr(http, &name, &value, NULL) > 0) {
             if (strcmp(name, ":method") == 0 && strcmp(value, "GET") == 0) {
                 data->flags |= 1 << 0;
             } else if (strcmp(name, "connection") == 0) {
@@ -397,3 +399,4 @@ ews_status_t ews_ws_route_handler(ews_http_t *http)
 
     return EWS_STATUS_DONE;
 }
+#endif

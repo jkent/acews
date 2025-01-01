@@ -118,16 +118,12 @@ struct ews_semaphore {
 /// @param[in] semaphore pointer to ews_semaphore
 /// @param[in] max maximum semaphore value
 /// @param[in] initial initial semaphore value
-/// @return 1 on success, 0 on error
+/// @return -1 on error, 0 on success
 static inline int ews_semaphore_init(ews_semaphore_t *semaphore, uint32_t max,
         uint32_t initial)
 {
     semaphore->max = max;
-    if (sem_init(&semaphore->semaphore, 0, initial)) {
-        return 1;
-    }
-
-    return 0;
+    return sem_init(&semaphore->semaphore, 0, initial);
 }
 
 /// tear down a semaphore
@@ -142,16 +138,16 @@ static inline void ews_sempaphore_destroy(ews_semaphore_t *semaphore)
 /// take on a semapore
 /// @param semaphore pointer to ews_semaphore
 /// @param timeout_ms timeout; 0 for no timeout, @a UINT32_MAX to wait forever
-/// @return 1 on success, 0 on timeout or error
+/// @return -1 on timeout or error, 0 on success
 static inline int ews_semaphore_take(ews_semaphore_t *semaphore,
         uint32_t timeout_ms)
 {
     assert(semaphore != NULL);
 
-    if (timeout_ms == 0) {
-        return sem_trywait(&semaphore->semaphore) == 0;
+    if (!timeout_ms) {
+        return sem_trywait(&semaphore->semaphore);
     } else if (timeout_ms == UINT32_MAX) {
-        return sem_wait(&semaphore->semaphore) == 0;
+        return sem_wait(&semaphore->semaphore);
     } else {
         struct timespec ts;
         if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts) == -1) {
@@ -161,13 +157,13 @@ static inline int ews_semaphore_take(ews_semaphore_t *semaphore,
         ts.tv_nsec += (timeout_ms % 1000) * 1000000;
         ts.tv_sec += ts.tv_nsec / 1000000000;
         ts.tv_nsec %= 1000000000;
-        return sem_timedwait(&semaphore->semaphore, &ts) == 0;
+        return sem_timedwait(&semaphore->semaphore, &ts);
     }
 }
 
 /// give on a semaphore
 /// @param semaphore pointer to ews_semaphore
-/// @return 1 on sucess, 0 on max value reached or error
+/// @return -1 on max value reached or error, 0 on success
 static inline int ews_semaphore_give(ews_semaphore_t *semaphore)
 {
     assert(semaphore != NULL);
@@ -175,9 +171,9 @@ static inline int ews_semaphore_give(ews_semaphore_t *semaphore)
     int num;
     sem_getvalue(&semaphore->semaphore, &num);
     if (num == semaphore->max) {
-        return 0;
+        return -1;
     }
-    return sem_post(&semaphore->semaphore) == 0;
+    return sem_post(&semaphore->semaphore);
 }
 
 /// @}
@@ -226,7 +222,7 @@ static void *thread_wrapper(void *arg)
 /// @param[in] func thread function
 /// @param[in] arg thread argument
 /// @param[in] stack_words size of the stack in number of machine words
-/// @return 1 on success, 0 on error
+/// @return -1 on error, 0 on success
 static inline int ews_thread_init(ews_thread_t *thread, ews_thread_func_t func,
         void *arg, int stack_words)
 {
@@ -243,18 +239,16 @@ static inline int ews_thread_init(ews_thread_t *thread, ews_thread_func_t func,
     if (pthread_create(&thread->pthread, &attr, thread_wrapper, thread) < 0) {
         pthread_attr_destroy(&attr);
         LOGE("pthread_create failed");
-        return 0;
+        return -1;
     }
     pthread_attr_destroy(&attr);
-    return 1;
+    return 0;
 }
 
 /// tear down a thread
 /// @param[in] thread pointer to ews_thread
 static inline void ews_thread_destroy(ews_thread_t *thread)
 {
-    assert(thread != NULL);
-
     if (pthread_self() == thread->pthread) {
         sigset_t set;
         struct timespec timeout = { 0 };
@@ -263,7 +257,7 @@ static inline void ews_thread_destroy(ews_thread_t *thread)
         sigtimedwait(&set, NULL, &timeout);
     }
 
-    if (thread == NULL) {
+    if (!thread) {
         pthread_exit(NULL);
     } else {
         pthread_exit(&thread->pthread);
@@ -305,7 +299,7 @@ static void timer_wrapper(union sigval val)
 /// @param[in] autoreload @a true for periodic, @a false for one-shot
 /// @param[in] func timer handler function
 /// @param[in] arg timer handler argument
-/// @return 1 on success or 0 on failure
+/// @return -1 on error, 0 on success
 static inline int ews_timer_init(ews_timer_t *timer, int period_ms,
         bool autoreload, ews_timer_handler_t func, void *arg)
 {
@@ -330,10 +324,7 @@ static inline int ews_timer_init(ews_timer_t *timer, int period_ms,
         .sigev_notify_attributes = 0,
     };
 
-    if (timer_create(CLOCK_MONOTONIC, &sev, &timer->handle) < 0) {
-        return 0;
-    }
-    return 1;
+    return timer_create(CLOCK_MONOTONIC, &sev, &timer->handle);
 }
 
 /// tear down a timer

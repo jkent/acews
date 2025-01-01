@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include "ews_config.h"
+
+#define EWS_PRIVATE_DEFS
 #include "ews_port.h"
 
 

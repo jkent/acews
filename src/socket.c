@@ -24,10 +24,10 @@
 #include "socket.h"
 
 
-static int ews_sock_sendf(ews_sock_t *sock, const char *fmt, ...);
+static ssize_t ews_sock_sendf(ews_sock_t *sock, const char *fmt, ...);
 
 #if CONFIG_EWS_HTTP_CLIENTS > 0
-static int ews_sock_send(ews_sock_t *sock, const void *buf, int len)
+static ssize_t ews_sock_send(ews_sock_t *sock, const void *buf, ssize_t len)
 {
     int ret;
 
@@ -54,7 +54,7 @@ static int ews_sock_send(ews_sock_t *sock, const void *buf, int len)
     return ret;
 }
 
-static int ews_sock_recv(ews_sock_t *sock, void *buf, int len)
+static ssize_t ews_sock_recv(ews_sock_t *sock, void *buf, size_t len)
 {
     int ret;
 
@@ -161,7 +161,7 @@ void ews_connect(ews_sock_t *sock)
 #endif
 
 #if CONFIG_EWS_HTTPS_CLIENTS > 0
-static int ews_sock_send_tls(ews_sock_t *sock, const void *buf, int len)
+static ssize_t ews_sock_send_tls(ews_sock_t *sock, const void *buf, ssize_t len)
 {
     ews_client_tls_t *client = (ews_client_tls_t *) sock;
     int ret;
@@ -190,7 +190,7 @@ static int ews_sock_send_tls(ews_sock_t *sock, const void *buf, int len)
     return ret;
 }
 
-static int ews_sock_recv_tls(ews_sock_t *sock, void *buf, int len)
+static ssize_t ews_sock_recv_tls(ews_sock_t *sock, void *buf, size_t len)
 {
     ews_client_tls_t *client = (ews_client_tls_t *) sock;
     int ret;
@@ -324,7 +324,7 @@ void ews_connect_tls(ews_sock_t *sock)
 }
 #endif
 
-static int ews_sock_vsendf(ews_sock_t *sock, const char *fmt, va_list va)
+static ssize_t ews_sock_vsendf(ews_sock_t *sock, const char *fmt, va_list va)
 {
     va_list va2;
     int len;
@@ -338,10 +338,10 @@ static int ews_sock_vsendf(ews_sock_t *sock, const char *fmt, va_list va)
     return sock->ops->send(sock, buf, len);
 }
 
-static int ews_sock_sendf(ews_sock_t *sock, const char *fmt, ...)
+static ssize_t ews_sock_sendf(ews_sock_t *sock, const char *fmt, ...)
 {
     va_list va;
-    int ret;
+    ssize_t ret;
 
     va_start(va, fmt);
     ret = ews_sock_vsendf(sock, fmt, va);
