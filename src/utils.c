@@ -2,6 +2,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
 #include <string.h>
@@ -12,7 +13,7 @@
 #include "utils.h"
 
 
-bool fnmatch(const char *pattern, const char *string)
+bool ews_fnmatch(const char *pattern, const char *string)
 {
     const char *p = pattern;
     const char *pe = p + strlen(pattern);
@@ -45,7 +46,7 @@ bool fnmatch(const char *pattern, const char *string)
     }
 }
 
-ssize_t find(const char *buf, size_t hlen, const char *s)
+ssize_t ews_find(const char *buf, size_t hlen, const char *s)
 {
     size_t nlen = strlen(s);
     size_t i = 0, j = 0;
@@ -67,7 +68,7 @@ ssize_t find(const char *buf, size_t hlen, const char *s)
     return -1;
 }
 
-ssize_t findp(const char *buf, size_t hlen, const char *s)
+ssize_t ews_findp(const char *buf, size_t hlen, const char *s)
 {
     size_t nlen = strlen(s);
     size_t i = 0, j = 0;
@@ -85,7 +86,7 @@ ssize_t findp(const char *buf, size_t hlen, const char *s)
     return -1;
 }
 
-void parse_uri(const char *uri, char *path, size_t *path_len,
+void ews_parse_uri(const char *uri, char *path, size_t *path_len,
         const char **query, size_t *query_len)
 {
     const char *pi = uri;
@@ -158,5 +159,34 @@ void parse_uri(const char *uri, char *path, size_t *path_len,
             (*query_len)++;
         }
         *po = '\0';
+    }
+}
+
+void ews_hexdump(const char *buf, size_t len)
+{
+    size_t i, j;
+
+    for (i = 0; i < len; i += 16) {
+        for (j = 0; j < 16; j++) {
+            if (i + j >= len) {
+                printf("   ");
+            } else {
+                printf("%02X ", (uint8_t) buf[i + j]);
+            }
+            if (j % 4 == 3 && j < 15) {
+                putchar(' ');
+            }
+        }
+        printf("| ");
+        for (j = 0; j < 16; j++) {
+            if (i + j >= len) {
+                putchar(' ');
+            } else if (buf[i + j] < 32 || buf[i + j] >= 127) {
+                putchar('.');
+            } else {
+                putchar(buf[i + j]);
+            }
+        }
+        putchar('\n');
     }
 }

@@ -318,7 +318,7 @@ static ssize_t http_ops_recv(ews_http_t *http, char *buf, ssize_t buf_sz)
 
     if (http->_sess._req.boundary) {
         if (http->_sess.state == EWS_STATE_REQ_BDY) {
-            pos = findp(&http->_conn.buf[http->_conn.bufpos], len,
+            pos = ews_findp(&http->_conn.buf[http->_conn.bufpos], len,
                     http->_sess._req.boundary + 2);
             if (pos > 0) {
                 len = pos;
@@ -343,7 +343,7 @@ static ssize_t http_ops_recv(ews_http_t *http, char *buf, ssize_t buf_sz)
             return 0;
         }
 
-        pos = findp(&http->_conn.buf[http->_conn.bufpos], len,
+        pos = ews_findp(&http->_conn.buf[http->_conn.bufpos], len,
                 http->_sess._req.boundary);
         if (pos > 0) {
             len = pos;
@@ -563,7 +563,7 @@ static int start_req(ews_http_t *http)
     }
 
     // look for termination
-    pos = find(http->_conn.buf, http->_conn.buflen, "\r\n\r\n");
+    pos = ews_find(http->_conn.buf, http->_conn.buflen, "\r\n\r\n");
     // not found? try again later
     if (pos < 0) {
         return 0;
@@ -582,7 +582,7 @@ static int start_req(ews_http_t *http)
         if (!http->_sess._req.x_path) {
             return -1;
         }
-        parse_uri(http->_sess._req.path, (char *) http->_sess._req.x_path,
+        ews_parse_uri(http->_sess._req.path, (char *) http->_sess._req.x_path,
                 &http->_sess._req.x_path_len, &http->_sess._req.x_query,
                 &http->_sess._req.x_query_len);
     }
@@ -604,7 +604,7 @@ static int fetch_mp(ews_http_t *http)
     }
 
     // look for termination
-    pos = find(&http->_conn.buf[http->_conn.bufpos], http->_conn.buflen,
+    pos = ews_find(&http->_conn.buf[http->_conn.bufpos], http->_conn.buflen,
             "\r\n\r\n");
     // not found? try again later
     if (pos < 0) {
@@ -633,7 +633,7 @@ static ews_status_t find_route(ews_http_t *http)
     http->route = ews->route_first;
 
     while (http->route) {
-        if (!fnmatch(http->route->pattern, path)) {
+        if (!ews_fnmatch(http->route->pattern, path)) {
             http->route = http->route->next;
             continue;
         }
@@ -704,8 +704,8 @@ static void finalize(ews_http_t *http)
     memset(&http->_sess, 0, sizeof(http->_sess));
 
 #if CONFIG_EWS_WS_CLIENTS > 0 || CONFIG_EWS_WSS_CLIENTS > 0
-    if (http->_sess.flags & EWS_FLAGS_WEBSOCKET) {
-        ws_upgrade(http, sock);
+    if (flags & EWS_FLAGS_WEBSOCKET) {
+        ews_ws_upgrade(http, sock);
 
         // free session data
         free(http);

@@ -15,8 +15,16 @@
 #include "http.h"
 #include "server.h"
 #include "socket.h"
+#include "utils.h"
 #include "websocket.h"
 
+
+enum {
+    STATE_TYPE_NONE     = (0 <<  0),
+    STATE_TYPE_TEXT     = (1 <<  0),
+    STATE_TYPE_BINARY   = (2 <<  0),
+    STATE_TYPE_MASK     = (3 <<  0),
+};
 
 enum {
     OPCODE_CONT     = 0x0,
@@ -80,7 +88,7 @@ static int ws_send_hdr(ews_ws_t *ws, int opcode, size_t len)
     } else if (len >= 126) {
         buf[i++] = 126;
         buf[i++] = len >> 8;
-        buf[i++] = len >> 16;
+        buf[i++] = len;
     } else {
         buf[i++] = len;
     }
@@ -92,29 +100,34 @@ static int ws_send_hdr(ews_ws_t *ws, int opcode, size_t len)
     return 0;
 }
 
-static ssize_t ws_ops_recv(ews_ws_t *ws, int *flags, char *buf, ssize_t buf_sz)
+static int ws_recv_hdr(ews_ws_t *ws)
 {
     ews_sock_t *sock = ws->_sock;
-    uint8_t hdr[10];
-    uint32_t remaining = ws->_recv.length - ws->_recv.consumed;
-    int ret = -1;
+    char hdr[10], buf[125];
+    int ret;
 
-    while ((ws->_recv.state & WS_STATE_TYPE_MASK) == WS_STATE_TYPE_NONE) {
+    while (true) {
         ret = sock->ops->recv(sock, hdr, 2);
-        if (ret < 0) {
+        if (ret != 2) {
             return -1;
         }
+
         ws->_recv.opcode = hdr[0];
-        ws->_recv.length = hdr[1] & 0x7f;
-        if (ws->_recv.length == 126) {
+        if ((hdr[1] & 0x7F) < 126) {
+            ws->_recv.length = hdr[1] & 0x7F;
+        } else if ((hdr[1] & 0x7F) == 126) {
             ret = sock->ops->recv(sock, &hdr[2], 2);
-            if (ret < 0) {
+            if (ret != 2) {
                 return -1;
             }
-            ws->_recv.length = hdr[2] << 8 | hdr[3];
-        } else if (ws->_recv.length == 127) {
+            ws->_recv.length = hdr[2] << 8;
+            ws->_recv.length |= hdr[3];
+        } else {
             ret = sock->ops->recv(sock, &hdr[2], 8);
-            if (ret < 0 || hdr[2] || hdr[3] || hdr[4] || hdr[5]) {
+            if (ret != 8) {
+                return -1;
+            }
+            if (hdr[2] != 0 || hdr[3] != 0 || hdr[4] != 0 || hdr[5] != 0) {
                 return -1;
             }
             ws->_recv.length = hdr[6] << 24;
@@ -122,69 +135,104 @@ static ssize_t ws_ops_recv(ews_ws_t *ws, int *flags, char *buf, ssize_t buf_sz)
             ws->_recv.length |= hdr[8] << 8;
             ws->_recv.length |= hdr[9];
         }
-        ws->_recv.mask = !!(hdr[1] & 0x80);
-        if (ws->_recv.mask) {
+
+        if (hdr[1] & 0x80) {
             ret = sock->ops->recv(sock, ws->_recv.key, 4);
-            if (ret < 0) {
+            if (ret != 4) {
                 return -1;
             }
+        } else {
+            memset(ws->_recv.key, 0, 4);
         }
 
-        if ((ws->_recv.opcode & 0xf) == OPCODE_PING) {
-            char msg[125];
-            if (ws->_recv.length >= 126) {
+        switch (hdr[0] & 0xf) {
+        case OPCODE_CONT:
+            if ((ws->_recv.state & STATE_TYPE_MASK) == STATE_TYPE_NONE) {
                 return -1;
             }
-            ret = sock->ops->recv(sock, buf, sizeof(msg));
-            if (ret < 0) {
-                return -1;
-            }
-            if (ws->_recv.mask) {
-                for (int i = 0; i < ret; i++) {
-                    buf[i] ^= ws->_recv.key[(i + ws->_recv.consumed) % 4];
-                }
-            }
+            return 0;
 
-            if (ws_send_hdr(ws, OPCODE_PONG | FLAG_FIN, ws->_recv.length) < 0) {
+        case OPCODE_TEXT:
+            if ((ws->_recv.state & STATE_TYPE_MASK) != STATE_TYPE_NONE) {
                 return -1;
             }
+            ws->_recv.state |= STATE_TYPE_TEXT;
+            return 0;
 
-            if (sock->ops->send(sock, msg, ws->_recv.length) < 0) {
+        case OPCODE_BIN:
+            if ((ws->_recv.state & STATE_TYPE_MASK) != STATE_TYPE_NONE) {
                 return -1;
             }
-        } else if ((ws->_recv.opcode & 0xf) == OPCODE_CLOSE) {
+            ws->_recv.state |= STATE_TYPE_BINARY;
+            return 0;
+
+        case OPCODE_CLOSE:
             ws_send_hdr(ws, OPCODE_CLOSE, 0);
             return -1;
-        } else if ((ws->_recv.opcode & 0xf) == OPCODE_CONT) {
-            remaining = ws->_recv.length;
-        } else if ((ws->_recv.opcode & 0xf) == OPCODE_TEXT) {
-            ws->_recv.state |= WS_STATE_TYPE_TEXT;
-            remaining = ws->_recv.length;
-        } else if ((ws->_recv.opcode & 0xf) == OPCODE_BIN) {
-            ws->_recv.state |= WS_STATE_TYPE_BINARY;
-            remaining = ws->_recv.length;
-        } else {
-            return -1;
-        }
-    }
 
-    if (remaining) {
-        ret = sock->ops->recv(sock, buf, remaining);
-        if (ret < 0) {
-            return -1;
-        }
-
-        if (ws->_recv.mask) {
-            for (int i = 0; i < ret; i++) {
-                buf[i] ^= ws->_recv.key[(i + ws->_recv.consumed) % 4];
+        case OPCODE_PING:
+            if (ws->_recv.length > sizeof(buf)) {
+                return -1;
             }
+            ret = sock->ops->recv(sock, buf, ws->_recv.length);
+            if (ret != ws->_recv.length) {
+                return -1;
+            }
+            for (int i = 0; i < ret; i++) {
+                buf[i] ^= ws->_recv.key[i % 4];
+            }
+            if (ws_send_hdr(ws, OPCODE_PONG | FLAG_FIN, ret) < 0) {
+                return -1;
+            }
+            if (sock->ops->send(sock, buf, ret) < 0) {
+                return -1;
+            }
+            break;
+
+        default:
+            return -1;
         }
-        ws->_recv.consumed += ret;
-        remaining -= ret;
     }
+
+    return 0;
+}
+
+static ssize_t ws_ops_recv(ews_ws_t *ws, int *flags, char *buf, ssize_t buf_sz)
+{
+    size_t remaining = ws->_recv.length - ws->_recv.consumed;
+    ews_sock_t *sock = ws->_sock;
+    int ret;
+
+    if (remaining == 0) {
+        if (ws_recv_hdr(ws) < 0) {
+            ws->_recv.length = 0;
+            return -1;
+        }
+        ws->_recv.consumed = 0;
+        remaining = ws->_recv.length;
+    }
+
+    if (ws->_recv.state & STATE_TYPE_BINARY) {
+        *flags |= EWS_WS_FLAG_BIN;
+    } else {
+        *flags &= ~EWS_WS_FLAG_BIN;
+    }
+
+    ret = sock->ops->recv(sock, buf, remaining);
+    if (ret < 0) {
+        return -1;
+    }
+
+    for (int i = 0; i < ret; i++) {
+        buf[i] ^= ws->_recv.key[(i + ws->_recv.consumed) % 4];
+    }
+
+    ws->_recv.consumed += ret;
+    remaining = ws->_recv.length - ws->_recv.consumed;
 
     if (remaining == 0 && ws->_recv.opcode & FLAG_FIN) {
-        ws->_recv.state &= ~WS_STATE_TYPE_MASK;
+        ws->_recv.state &= ~STATE_TYPE_MASK;
+        *flags |= EWS_WS_FLAG_FIN;
     }
 
     return ret;
@@ -200,17 +248,18 @@ static ssize_t ws_ops_send(ews_ws_t *ws, int flags, const char *buf,
         buf_sz = strlen(buf);
     }
 
-    if (ws->_send.state) {
+    if (ws->_send.state & STATE_TYPE_MASK) {
         opcode = 0x00;
     } else if (flags & EWS_WS_FLAG_BIN) {
-        ws->_send.state |= WS_STATE_TYPE_BINARY;
+        ws->_send.state |= STATE_TYPE_BINARY;
         opcode = 0x02;
     } else {
-        ws->_send.state |= WS_STATE_TYPE_TEXT;
+        ws->_send.state |= STATE_TYPE_TEXT;
         opcode = 0x01;
     }
     if (flags & EWS_WS_FLAG_FIN) {
-        ws->_send.state &= ~WS_STATE_TYPE_MASK;
+        ws->_send.state &= ~STATE_TYPE_MASK;
+        opcode |= 0x80;
     }
 
     if (ws_send_hdr(ws, opcode, buf_sz) < 0) {
@@ -268,7 +317,7 @@ static void ws_wrapper(void *arg)
     ews_thread_destroy(thread);
 }
 
-int ws_upgrade(ews_http_t *http, ews_sock_t *http_sock)
+int ews_ws_upgrade(ews_http_t *http, ews_sock_t *http_sock)
 {
     ews_t *ews = http_sock->ews;
     ews_sock_t *ws_sock = NULL;
@@ -329,6 +378,8 @@ int ws_upgrade(ews_http_t *http, ews_sock_t *http_sock)
     ws_sock->user = ws;
 
     thread = &((ews_client_t *) ws_sock)->thread;
+
+    LOGD("#%d upgrade success", ws_sock->fd);
 
     return ews_thread_init(thread, ws_wrapper, ws, CONFIG_EWS_WS_STACK_SIZE);
 }
