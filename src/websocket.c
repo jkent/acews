@@ -354,7 +354,7 @@ int ews_ws_upgrade(ews_http_t *http, ews_sock_t *http_sock)
         ews_client_tls_t *wss_client;
         for (int i = 0; i < countof(ews->wss_client); i++) {
             wss_client = &ews->wss_client[i];
-            if (!(ws_client->sock.flags & EWS_SOCK_FLAG_INUSE)) {
+            if (!(wss_client->sock.flags & EWS_SOCK_FLAG_INUSE)) {
                 memcpy(wss_client, https_client, sizeof(*wss_client));
                 wss_client->sock.flags &= ~EWS_SOCK_FLAG_PROTO_MASK;
                 wss_client->sock.flags |= EWS_SOCK_FLAG_PROTO_WEBSOCKET;

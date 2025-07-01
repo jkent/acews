@@ -1,0 +1,17 @@
+option('use-ipv6', type: 'boolean', value: true)
+option('use-tls', type: 'boolean', value: false)
+option('use-websockets', type: 'boolean', value: true)
+
+option('default-backlog', type: 'integer', value: 9)
+option('default-timeout', type: 'integer', value: 15000)
+option('session-bufsize', type: 'integer', value: 2048)
+option('worker-stack', type: 'integer', value: 4096)
+option('websocket-stack', type: 'integer', value: 4096)
+
+option('http-clients', type: 'integer', value: 6)
+option('ws-clients', type: 'integer', value: 2)
+
+option('https-clients', type: 'integer', value: 6)
+option('wss-clients', type: 'integer', value: 2)
+
+option('log-level', type: 'combo', choices: ['none', 'fatal', 'error', 'warning', 'info', 'debug', 'verbose'], value: 'warning')

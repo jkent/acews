@@ -5,14 +5,64 @@ project('acews', ['c'],
 )
 compiler = meson.get_compiler('c')
 
-includes = [
-    include_directories('include'),
-]
+use_ipv6 = get_option('use-ipv6')
+use_tls = get_option('use-tls')
+use_ws = get_option('use-websockets')
+default_timeout = get_option('default-timeout')
+default_backlog = get_option('default-backlog')
+session_bufsize = get_option('session-bufsize')
+worker_stack = get_option('worker-stack')
+ws_stack = get_option('websocket-stack')
+http_clients = get_option('http-clients')
+ws_clients = get_option('ws-clients')
+https_clients = get_option('https-clients')
+wss_clients = get_option('wss-clients')
+log_level = get_option('log-level')
+
+conf_data = configuration_data()
+conf_data.set10('USE_IPV6', use_ipv6)
+conf_data.set10('USE_TLS', use_tls)
+conf_data.set10('USE_WEBSOCKET', use_ws)
+
+conf_data.set('DEFAULT_BACKLOG', default_backlog)
+conf_data.set('DEFAULT_TIMEOUT', default_timeout)
+conf_data.set('SESSION_BUFSIZE', session_bufsize)
+conf_data.set('WORKER_STACK', worker_stack)
+conf_data.set('WS_STACK', ws_stack)
+conf_data.set('HTTP_CLIENTS', http_clients)
+conf_data.set('WS_CLIENTS', ws_clients)
+conf_data.set('HTTPS_CLIENTS', https_clients)
+conf_data.set('WSS_CLIENTS', wss_clients)
+if log_level == 'none'
+    conf_data.set('LOG_LEVEL', 'LOG_NONE')
+elif log_level == 'fatal'
+    conf_data.set('LOG_LEVEL', 'LOG_FATAL')
+elif log_level == 'error'
+    conf_data.set('LOG_LEVEL', 'LOG_ERROR')
+elif log_level == 'warning'
+    conf_data.set('LOG_LEVEL', 'LOG_WARN')
+elif log_level == 'info'
+    conf_data.set('LOG_LEVEL', 'LOG_INFO')
+elif log_level == 'debug'
+    conf_data.set('LOG_LEVEL', 'LOG_DEBUG')
+elif log_level == 'verbose'
+    conf_data.set('LOG_LEVEL', 'LOG_VERBOSE')
+endif
+
+configure_file(
+    input: 'include/ews_config.h.in',
+    output: 'ews_config.h',
+    configuration: conf_data,
+)
+
+includes = [include_directories(
+    '.',
+    'include'
+)]
 private_includes = [
     include_directories('src'),
 ]
 sources = []
-defines = ['-DCONFIG_EWS_LOG_LEVEL_VERBOSE']
 
 subdir('src')
 
@@ -47,13 +97,11 @@ depends = [
 
 libacews = static_library('libacews',
     sources,
-    c_args: defines,
     dependencies: depends,
     include_directories: includes,
 )
 
 acews_dep = declare_dependency(
-    compile_args: defines,
     include_directories: includes,
     link_with: [libacews],
 )

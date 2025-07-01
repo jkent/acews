@@ -44,7 +44,7 @@ ews_t *ews_init(const ews_config_t *config)
     if (config && ews->config.http_listen_backlog == UINT16_MAX) {
         ews->config.http_listen_backlog = 0;
     } else if (ews->config.http_listen_backlog == 0) {
-        ews->config.http_listen_backlog = CONFIG_EWS_HTTP_BACKLOG_DFLT;
+        ews->config.http_listen_backlog = CONFIG_EWS_BACKLOG_DFLT;
     }
 
     /// initialize http listener
@@ -56,10 +56,10 @@ ews_t *ews_init(const ews_config_t *config)
     if (ews->config.https_listen_port == 0) {
         ews->config.https_listen_port = 443;
     }
-    if (config && ews->config.https_listen_backlog == UINT16_MAX0) {
+    if (config && ews->config.https_listen_backlog == UINT16_MAX) {
         ews->config.https_listen_backlog = 0;
     } else if (ews->config.https_listen_backlog == 0) {
-        ews->config.https_listen_backlog = CONFIG_EWS_HTTPS_BACKLOG_DFLT;
+        ews->config.https_listen_backlog = CONFIG_EWS_BACKLOG_DFLT;
     }
 
     if (ews->config.https_crt) {
