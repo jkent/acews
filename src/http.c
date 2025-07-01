@@ -705,7 +705,10 @@ static void finalize(ews_http_t *http)
 
 #if CONFIG_EWS_WS_CLIENTS > 0 || CONFIG_EWS_WSS_CLIENTS > 0
     if (flags & EWS_FLAGS_WEBSOCKET) {
-        ews_ws_upgrade(http, sock);
+        if (ews_ws_upgrade(http, sock) < 0) {
+            sock->ops->shutdown(sock);
+            return;
+        }
 
         // free session data
         free(http);

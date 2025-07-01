@@ -212,10 +212,12 @@ static ssize_t ws_ops_recv(ews_ws_t *ws, int *flags, char *buf, ssize_t buf_sz)
         remaining = ws->_recv.length;
     }
 
-    if (ws->_recv.state & STATE_TYPE_BINARY) {
-        *flags |= EWS_WS_FLAG_BIN;
-    } else {
-        *flags &= ~EWS_WS_FLAG_BIN;
+    if (flags) {
+        if (ws->_recv.state & STATE_TYPE_BINARY) {
+            *flags |= EWS_WS_FLAG_BIN;
+        } else {
+            *flags &= ~EWS_WS_FLAG_BIN;
+        }
     }
 
     ret = sock->ops->recv(sock, buf, remaining);
@@ -232,7 +234,9 @@ static ssize_t ws_ops_recv(ews_ws_t *ws, int *flags, char *buf, ssize_t buf_sz)
 
     if (remaining == 0 && ws->_recv.opcode & FLAG_FIN) {
         ws->_recv.state &= ~STATE_TYPE_MASK;
-        *flags |= EWS_WS_FLAG_FIN;
+        if (flags) {
+            *flags |= EWS_WS_FLAG_FIN;
+        }
     }
 
     return ret;
