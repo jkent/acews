@@ -90,52 +90,6 @@ const ews_route_t ews_route_404 = {
     .handler = ews_route_404_handler,
 };
 
-ews_status_t ews_routes_test_handler(ews_http_t *http)
-{
-    const char *name, *value;
-    size_t value_len;
-    char buf[1024];
-    int ret;
-
-    switch (http->sess->state) {
-    case EWS_STATE_REQ:
-        while (http->ops->get_hdr(http, &name, &value, &value_len) > 0) {
-            printf("hdr: %s: (%d)%s\n", name, (int) value_len, value);
-        }
-        return EWS_STATUS_MATCH;
-
-    case EWS_STATE_REQ_BDY:
-        while ((ret = http->ops->recv(http, buf, sizeof(buf))) > 0) {
-            printf("bdy: (%d)\"%.*s\"\n", ret, (int) ret, buf);
-        }
-        break;
-
-    case EWS_STATE_REQ_MP:
-        while (http->ops->get_hdr(http, &name, &value, &value_len) > 0) {
-            printf("mp_hdr: %s: (%d)%s\n", name, (int) value_len, value);
-        }
-        break;
-
-    case EWS_STATE_REQ_MP_BDY:
-        while ((ret = http->ops->recv(http, buf, sizeof(buf))) > 0) {
-            printf("mp_bdy: (%d)\"%.*s\"\n", ret, (int) ret, buf);
-        }
-        break;
-
-    case EWS_STATE_RSP:
-        http->ops->start_rsp(http, 200, "OK");
-        http->ops->send_hdr(http, "Content-Length", "12");
-        // http->ops->send_hdr(http, "Transfer-Encoding", "chunked");
-        break;
-
-    case EWS_STATE_RSP_BDY:
-        http->ops->send(http, "Hello world!", 12);
-        break;
-    }
-
-    return EWS_STATUS_NEXT;
-}
-
 ews_status_t ews_routes_directory_rediret_handler(ews_http_t *http)
 {
     const char *name, *value;
@@ -207,7 +161,9 @@ ews_status_t ews_routes_stdio_get_handler(ews_http_t *http)
                 }
                 if (ret < 0 || !S_ISREG(st.st_mode)) {
                     value_len--;
-                    if (value[value_len] == '/') {
+                    if (strcmp(value, "/") == 0) {
+                        snprintf(buf, sizeof(buf), "%s/index.html", base);
+                    } else if (value[value_len] == '/') {
                         snprintf(buf, sizeof(buf), "%s%sindex.html", base,
                                 value);
                     } else {
