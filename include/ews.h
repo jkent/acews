@@ -312,6 +312,7 @@ enum {
 struct ews_ws_ops {
     /// recv data
     /// @param[inout] ws session instance
+    /// @param[out] flags recv flags, can be null
     /// @param[out] buf buffer, can be null to discard data
     /// @param[in] buf_sz buffer size, -1 for all (useful for discarding)
     /// @returns < 0 on error, 0 try again later, > 0 bytes received
@@ -321,6 +322,7 @@ struct ews_ws_ops {
 
     /// send data
     /// @param[inout] ws session instance
+    /// @param[out] flags send flags
     /// @param[in] buf buffer
     /// @param[in] buf_sz buffer size, -1 for strlen()
     /// @returns < 0 on error, 0 try again later, > 0 num bytes transmitted

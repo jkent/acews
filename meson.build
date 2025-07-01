@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
-project('acews',
-    ['c'],
+project('acews', ['c'],
     meson_version: '>=0.60.0',
     version: files('version.txt'),
 )
